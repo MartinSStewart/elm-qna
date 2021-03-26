@@ -1,13 +1,17 @@
 module Frontend exposing (..)
 
+import AssocList as Dict
 import Browser exposing (UrlRequest(..))
 import Browser.Navigation as Nav
 import Element
+import Element.Background
+import Element.Border
 import Element.Font
 import Element.Input
 import Lamdera
 import Network
 import String.Nonempty as NonemptyString exposing (NonemptyString(..))
+import Time
 import Types exposing (..)
 import Url
 import Url.Parser
@@ -126,13 +130,35 @@ updateSuccessState updateFunc model =
 
 
 qnaSessionUpdate : QnaMsg -> QnaSession -> QnaSession
-qnaSessionUpdate msg model =
+qnaSessionUpdate msg qnaSession =
     case msg of
         LocalMsg (ToggleUpvote questionId) ->
-            Debug.todo ""
+            { qnaSession
+                | questions =
+                    Dict.update
+                        questionId
+                        (Maybe.map (\question -> { question | isUpvoted = not question.isUpvoted }))
+                        qnaSession.questions
+            }
 
-        LocalMsg (CreateQuestion nonempty) ->
-            Debug.todo ""
+        LocalMsg (CreateQuestion content) ->
+            let
+                questionId : QuestionId
+                questionId =
+                    Types.getQuestionId qnaSession.questions qnaSession.userId
+            in
+            { qnaSession
+                | questions =
+                    Dict.insert
+                        questionId
+                        { creationTime = Time.millisToPosix 0
+                        , content = content
+                        , isRead = False
+                        , votes = 0
+                        , isUpvoted = False
+                        }
+                        qnaSession.questions
+            }
 
         LocalMsg (PinQuestion hostKey questionId) ->
             Debug.todo ""
@@ -224,11 +250,15 @@ view model =
                     Element.column
                         [ Element.centerX, Element.centerY, Element.spacing 16 ]
                         [ Element.paragraph
-                            []
+                            [ Element.centerX ]
                             [ Element.text "If you want to join a Q&A session, please use the link your host has provided." ]
-                        , Element.el [ Element.Font.size 24 ] (Element.text "OR")
+                        , Element.el [ Element.Font.size 24, Element.centerX ] (Element.text "OR")
                         , Element.Input.button
-                            []
+                            [ Element.centerX
+                            , Element.Background.color <| Element.rgb 0.8 0.8 0.8
+                            , Element.padding 16
+                            , Element.Border.rounded 4
+                            ]
                             { onPress = Just PressedCreateQnaSession
                             , label = Element.paragraph [] [ Element.text "Create a new Q&A session" ]
                             }

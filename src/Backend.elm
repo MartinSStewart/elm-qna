@@ -2,7 +2,6 @@ module Backend exposing (..)
 
 import AssocList as Dict
 import Env
-import Html
 import Lamdera exposing (ClientId, SessionId)
 import Set
 import Set.Extra as Set
@@ -42,7 +41,7 @@ update msg model =
                 | qnaSessions =
                     Dict.map
                         (\_ qnaSession ->
-                            { qnaSession | connections = Set.remove clientId qnaSession.connections }
+                            { qnaSession | connections = Dict.remove clientId qnaSession.connections }
                         )
                         model.qnaSessions
               }
@@ -57,14 +56,21 @@ updateFromFrontend sessionId clientId msg model =
 
 updateQnaSession :
     CryptographicKey QnaSessionId
-    -> (BackendQnaSession -> ( BackendQnaSession, Cmd BackendMsg ))
+    -> ClientId
+    -> (UserId -> BackendQnaSession -> ( BackendQnaSession, Cmd BackendMsg ))
     -> BackendModel
     -> ( BackendModel, Cmd BackendMsg )
-updateQnaSession qnaSessionId updateFunc model =
+updateQnaSession qnaSessionId clientId updateFunc model =
     case Dict.get qnaSessionId model.qnaSessions of
         Just qnaSession ->
-            updateFunc qnaSession
-                |> Tuple.mapFirst (\a -> { model | qnaSessions = Dict.insert qnaSessionId a model.qnaSessions })
+            case Dict.get clientId qnaSession.connections of
+                Just userId ->
+                    updateFunc userId qnaSession
+                        |> Tuple.mapFirst
+                            (\a -> { model | qnaSessions = Dict.insert qnaSessionId a model.qnaSessions })
+
+                Nothing ->
+                    ( model, Cmd.none )
 
         Nothing ->
             ( model, Cmd.none )
@@ -75,9 +81,10 @@ updateQnaSession_ :
     -> ClientId
     -> Time.Posix
     -> LocalQnaMsg
+    -> UserId
     -> BackendQnaSession
     -> ( BackendQnaSession, List ( ClientId, ServerQnaMsg ) )
-updateQnaSession_ sessionId clientId currentTime localQnaMsg qnaSession =
+updateQnaSession_ sessionId clientId currentTime localQnaMsg userId qnaSession =
     case localQnaMsg of
         ToggleUpvote questionId ->
             case Dict.get questionId qnaSession.questions of
@@ -94,7 +101,7 @@ updateQnaSession_ sessionId clientId currentTime localQnaMsg qnaSession =
                     ( { qnaSession
                         | questions = Dict.insert questionId question2 qnaSession.questions
                       }
-                    , Set.toList qnaSession.connections
+                    , Dict.keys qnaSession.connections
                         |> List.map
                             (\clientId_ ->
                                 if clientId == clientId_ then
@@ -112,8 +119,9 @@ updateQnaSession_ sessionId clientId currentTime localQnaMsg qnaSession =
 
         CreateQuestion content ->
             let
+                questionId : QuestionId
                 questionId =
-                    Dict.size qnaSession.questions |> QuestionId
+                    Types.getQuestionId qnaSession.questions userId
             in
             ( { qnaSession
                 | questions =
@@ -126,7 +134,7 @@ updateQnaSession_ sessionId clientId currentTime localQnaMsg qnaSession =
                         }
                         qnaSession.questions
               }
-            , Set.toList qnaSession.connections
+            , Dict.keys qnaSession.connections
                 |> List.map
                     (\clientId_ ->
                         if clientId == clientId_ then
@@ -148,7 +156,7 @@ updateQnaSession_ sessionId clientId currentTime localQnaMsg qnaSession =
                                     { question | isRead = not question.isRead }
                                     qnaSession.questions
                           }
-                        , Set.toList qnaSession.connections
+                        , Dict.keys qnaSession.connections
                             |> List.map
                                 (\clientId_ ->
                                     if clientId == clientId_ then
@@ -178,33 +186,46 @@ updateFromFrontendWithTime sessionId clientId msg model currentTime =
         LocalMsgRequest qnaSessionId localQnaMsg ->
             updateQnaSession
                 qnaSessionId
-                (updateQnaSession_ sessionId clientId currentTime localQnaMsg
-                    >> Tuple.mapSecond
-                        (\effects ->
-                            List.map
-                                (\( clientId_, serverMsg ) ->
-                                    Lamdera.sendToFrontend clientId_ (ServerMsgResponse qnaSessionId serverMsg)
-                                )
-                                effects
-                                |> Cmd.batch
-                        )
+                clientId
+                (\userId qnaSession ->
+                    updateQnaSession_ sessionId clientId currentTime localQnaMsg userId qnaSession
+                        |> Tuple.mapSecond
+                            (\effects ->
+                                List.map
+                                    (\( clientId_, serverMsg ) ->
+                                        Lamdera.sendToFrontend clientId_ (ServerMsgResponse qnaSessionId serverMsg)
+                                    )
+                                    effects
+                                    |> Cmd.batch
+                            )
                 )
                 model
 
         GetQnaSession qnaSessionId ->
             case Dict.get qnaSessionId model.qnaSessions of
                 Just qnaSession ->
+                    let
+                        userId =
+                            UserId qnaSession.connectionCounter
+                    in
                     ( { model
                         | qnaSessions =
                             Dict.insert
                                 qnaSessionId
-                                { qnaSession | connections = Set.insert clientId qnaSession.connections }
+                                { qnaSession
+                                    | connections =
+                                        Dict.insert
+                                            clientId
+                                            userId
+                                            qnaSession.connections
+                                    , connectionCounter = qnaSession.connectionCounter + 1
+                                }
                                 model.qnaSessions
                       }
                     , Lamdera.sendToFrontend clientId
                         (GetQnaSessionResponse
                             qnaSessionId
-                            (Ok (Types.backendToFrontendQnaSession qnaSession))
+                            (Ok (Types.backendToFrontendQnaSession sessionId userId qnaSession))
                         )
                     )
 

@@ -51,6 +51,7 @@ type alias BackendModel =
 type alias QnaSession =
     { questions : Dict QuestionId Question
     , name : NonemptyString
+    , userId : UserId
     }
 
 
@@ -58,6 +59,7 @@ initQnaSession : NonemptyString -> QnaSession
 initQnaSession name =
     { questions = Dict.empty
     , name = name
+    , userId = UserId 0
     }
 
 
@@ -66,24 +68,36 @@ type alias BackendQnaSession =
     , host : SessionId
     , creationTime : Time.Posix
     , name : NonemptyString
-    , connections : Set ClientId
+    , connections : Dict ClientId UserId
     , hostKey : CryptographicKey HostKey
+    , connectionCounter : Int
     }
 
 
-backendToFrontendQnaSession : BackendQnaSession -> QnaSession
-backendToFrontendQnaSession qnaSession =
-    { questions = Dict.map (\_ question -> backendToFrontendQuestion question) qnaSession.questions
+getQuestionId : Dict QuestionId v -> UserId -> QuestionId
+getQuestionId questions userId =
+    Dict.filter
+        (\(QuestionId userId_ _) _ -> userId_ == userId)
+        questions
+        |> Dict.size
+        |> QuestionId userId
+
+
+backendToFrontendQnaSession : SessionId -> UserId -> BackendQnaSession -> QnaSession
+backendToFrontendQnaSession sessionId userId qnaSession =
+    { questions = Dict.map (\_ question -> backendToFrontendQuestion sessionId question) qnaSession.questions
     , name = qnaSession.name
+    , userId = userId
     }
 
 
-backendToFrontendQuestion : BackendQuestion -> Question
-backendToFrontendQuestion backendQuestion =
+backendToFrontendQuestion : SessionId -> BackendQuestion -> Question
+backendToFrontendQuestion sessionId backendQuestion =
     { creationTime = backendQuestion.creationTime
     , content = backendQuestion.content
     , isRead = backendQuestion.isRead
     , votes = Set.size backendQuestion.votes
+    , isUpvoted = Set.member sessionId backendQuestion.votes
     }
 
 
@@ -93,8 +107,9 @@ initBackendQnaSession hostKey hostSessionId creationTime name =
     , host = hostSessionId
     , creationTime = creationTime
     , name = name
-    , connections = Set.empty
+    , connections = Dict.empty
     , hostKey = hostKey
+    , connectionCounter = 0
     }
 
 
@@ -135,8 +150,12 @@ type CryptographicKey a
     = CryptographicKey String
 
 
+type UserId
+    = UserId Int
+
+
 type QuestionId
-    = QuestionId Int
+    = QuestionId UserId Int
 
 
 type alias Question =
@@ -144,6 +163,7 @@ type alias Question =
     , content : NonemptyString
     , isRead : Bool
     , votes : Int
+    , isUpvoted : Bool
     }
 
 
