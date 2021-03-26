@@ -2,7 +2,7 @@ module Frontend exposing (..)
 
 import AssocList as Dict exposing (Dict)
 import Browser exposing (UrlRequest(..))
-import Browser.Navigation as Nav
+import Browser.Navigation
 import Element exposing (Element)
 import Element.Background
 import Element.Border
@@ -30,7 +30,7 @@ app =
         }
 
 
-init : Url.Url -> Nav.Key -> ( FrontendModel, Cmd FrontendMsg )
+init : Url.Url -> Browser.Navigation.Key -> ( FrontendModel, Cmd FrontendMsg )
 init url key =
     case Url.Parser.parse urlDecoder url of
         Just (Just qnaSessionId) ->
@@ -64,12 +64,12 @@ update msg model =
             case urlRequest of
                 Internal url ->
                     ( model
-                    , Cmd.batch [ Nav.pushUrl model.key (Url.toString url) ]
+                    , Cmd.batch [ Browser.Navigation.pushUrl model.key (Url.toString url) ]
                     )
 
                 External url ->
                     ( model
-                    , Nav.load url
+                    , Browser.Navigation.load url
                     )
 
         UrlChanged url ->
@@ -275,7 +275,7 @@ updateFromBackend msg model =
                             | remoteData =
                                 case result of
                                     Ok qnaSession ->
-                                        Success (initSuccessModel qnaSessionId qnaSession)
+                                        Success (initSuccessModel qnaSessionId (Debug.log "qnaSession" qnaSession))
 
                                     Err () ->
                                         Failure ()
@@ -299,7 +299,7 @@ updateFromBackend msg model =
 
                 _ ->
                     model
-            , Cmd.none
+            , Browser.Navigation.pushUrl model.key (urlEncoder qnaSessionId)
             )
 
 
@@ -312,7 +312,7 @@ view model =
             (case model.remoteData of
                 NotAsked ->
                     Element.column
-                        [ Element.centerX, Element.centerY, Element.spacing 16 ]
+                        [ Element.centerX, Element.centerY, Element.spacing 16, Element.paddingXY 16 0 ]
                         [ Element.paragraph
                             [ Element.centerX ]
                             [ Element.text "If you want to join a Q&A session, please use the link your host has provided." ]
@@ -341,7 +341,7 @@ view model =
                     in
                     Element.column
                         [ Element.spacing 8
-                        , Element.width <| Element.maximum 600 Element.fill
+                        , Element.width <| Element.maximum 800 Element.fill
                         , Element.centerX
                         , Element.paddingXY 0 16
                         ]
@@ -403,13 +403,18 @@ questionView ( questionId, question ) =
             [ Element.Border.rounded 99999
             , Element.padding 8
             , Element.Background.color <| Element.rgb 0.5 0.5 0.5
-            , Element.width <| Element.px 48
-            , Element.height <| Element.px 48
+            , Element.width <| Element.px 56
+            , Element.height <| Element.px 56
             , Element.Border.width 2
             , Element.Border.color <| Element.rgb 0.4 0.4 0.4
             ]
             { onPress = Just (PressedToggledUpvote questionId)
-            , label = Element.el [ Element.centerX, Element.centerY ] (Element.text "👍")
+            , label =
+                Element.el
+                    [ Element.centerX, Element.centerY ]
+                    (Element.text
+                        ("👍" ++ String.fromInt question.votes)
+                    )
             }
         , Element.paragraph [] [ Element.text (NonemptyString.toString question.content) ]
         ]

@@ -1,6 +1,8 @@
 module Network exposing (..)
 
 import List.Extra
+
+
 type alias NetworkModel msg model =
     { localMsgs : List msg, serverState : model }
 
