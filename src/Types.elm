@@ -182,7 +182,7 @@ type FrontendMsg
     | PressedCreateQnaSession
     | TypedQuestion String
     | PressedCreateQuestion
-    | PressedToggledUpvote
+    | PressedToggledUpvote QuestionId
 
 
 type ToBackend

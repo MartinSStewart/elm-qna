@@ -1,13 +1,14 @@
 module Frontend exposing (..)
 
-import AssocList as Dict
+import AssocList as Dict exposing (Dict)
 import Browser exposing (UrlRequest(..))
 import Browser.Navigation as Nav
-import Element
+import Element exposing (Element)
 import Element.Background
 import Element.Border
 import Element.Font
 import Element.Input
+import Html exposing (Html)
 import Lamdera
 import Network
 import String.Nonempty as NonemptyString exposing (NonemptyString(..))
@@ -103,6 +104,8 @@ update msg model =
                             in
                             ( { success
                                 | networkModel = Network.updateFromUser (LocalMsg localMsg) success.networkModel
+                                , question = ""
+                                , pressedCreateQuestion = False
                               }
                             , Lamdera.sendToBackend (LocalMsgRequest success.qnaSessionId localMsg)
                             )
@@ -114,8 +117,20 @@ update msg model =
                 )
                 model
 
-        PressedToggledUpvote ->
-            Debug.todo ""
+        PressedToggledUpvote questionId ->
+            updateSuccessState
+                (\success ->
+                    let
+                        localMsg =
+                            ToggleUpvote questionId
+                    in
+                    ( { success
+                        | networkModel = Network.updateFromUser (LocalMsg localMsg) success.networkModel
+                      }
+                    , Lamdera.sendToBackend (LocalMsgRequest success.qnaSessionId localMsg)
+                    )
+                )
+                model
 
 
 updateSuccessState : (SuccessModel -> ( SuccessModel, Cmd FrontendMsg )) -> FrontendModel -> ( FrontendModel, Cmd FrontendMsg )
@@ -129,17 +144,31 @@ updateSuccessState updateFunc model =
             ( model, Cmd.none )
 
 
+toggleUpvote questionId qnaSession =
+    { qnaSession
+        | questions =
+            Dict.update
+                questionId
+                (Maybe.map (\question -> { question | isUpvoted = not question.isUpvoted }))
+                qnaSession.questions
+    }
+
+
+pinQuestion questionId qnaSession =
+    { qnaSession
+        | questions =
+            Dict.update
+                questionId
+                (Maybe.map (\question -> { question | isRead = not question.isRead }))
+                qnaSession.questions
+    }
+
+
 qnaSessionUpdate : QnaMsg -> QnaSession -> QnaSession
 qnaSessionUpdate msg qnaSession =
     case msg of
         LocalMsg (ToggleUpvote questionId) ->
-            { qnaSession
-                | questions =
-                    Dict.update
-                        questionId
-                        (Maybe.map (\question -> { question | isUpvoted = not question.isUpvoted }))
-                        qnaSession.questions
-            }
+            toggleUpvote questionId qnaSession
 
         LocalMsg (CreateQuestion content) ->
             let
@@ -160,26 +189,60 @@ qnaSessionUpdate msg qnaSession =
                         qnaSession.questions
             }
 
-        LocalMsg (PinQuestion hostKey questionId) ->
-            Debug.todo ""
+        LocalMsg (PinQuestion _ questionId) ->
+            pinQuestion questionId qnaSession
 
         ServerMsg (ToggleUpvoteResponse questionId) ->
-            Debug.todo ""
+            toggleUpvote questionId qnaSession
 
-        ServerMsg (NewQuestion questionId creationTime nonempty) ->
-            Debug.todo ""
+        ServerMsg (NewQuestion questionId creationTime content) ->
+            { qnaSession
+                | questions =
+                    Dict.insert questionId
+                        { creationTime = creationTime
+                        , content = content
+                        , isRead = False
+                        , votes = 0
+                        , isUpvoted = False
+                        }
+                        qnaSession.questions
+            }
 
         ServerMsg (CreateQuestionResponse questionId creationTime) ->
-            Debug.todo ""
+            { qnaSession
+                | questions =
+                    Dict.update
+                        questionId
+                        (Maybe.map
+                            (\question -> { question | creationTime = creationTime })
+                        )
+                        qnaSession.questions
+            }
 
-        ServerMsg (PinQuestionResponse _) ->
-            Debug.todo ""
+        ServerMsg (PinQuestionResponse questionId) ->
+            pinQuestion questionId qnaSession
 
-        ServerMsg (VotesChanged _ _) ->
-            Debug.todo ""
+        ServerMsg (VotesChanged questionId voteCount) ->
+            { qnaSession
+                | questions =
+                    Dict.update
+                        questionId
+                        (Maybe.map
+                            (\question -> { question | votes = voteCount })
+                        )
+                        qnaSession.questions
+            }
 
-        ServerMsg (QuestionPinned _) ->
-            Debug.todo ""
+        ServerMsg (QuestionPinned questionId) ->
+            { qnaSession
+                | questions =
+                    Dict.update
+                        questionId
+                        (Maybe.map
+                            (\question -> { question | isRead = not question.isRead })
+                        )
+                        qnaSession.questions
+            }
 
 
 updateFromBackend : ToFrontend -> FrontendModel -> ( FrontendModel, Cmd FrontendMsg )
@@ -240,6 +303,7 @@ updateFromBackend msg model =
             )
 
 
+view : FrontendModel -> { title : String, body : List (Html FrontendMsg) }
 view model =
     { title = "Questions & Answers"
     , body =
@@ -254,11 +318,7 @@ view model =
                             [ Element.text "If you want to join a Q&A session, please use the link your host has provided." ]
                         , Element.el [ Element.Font.size 24, Element.centerX ] (Element.text "OR")
                         , Element.Input.button
-                            [ Element.centerX
-                            , Element.Background.color <| Element.rgb 0.8 0.8 0.8
-                            , Element.padding 16
-                            , Element.Border.rounded 4
-                            ]
+                            (Element.centerX :: buttonStyle)
                             { onPress = Just PressedCreateQnaSession
                             , label = Element.paragraph [] [ Element.text "Create a new Q&A session" ]
                             }
@@ -274,7 +334,90 @@ view model =
                     Element.paragraph [] [ Element.text "That Q&A session doesn't exist." ]
 
                 Success success ->
-                    Debug.todo ""
+                    let
+                        qnaSession : QnaSession
+                        qnaSession =
+                            Network.localState qnaSessionUpdate success.networkModel
+                    in
+                    Element.column
+                        [ Element.spacing 8
+                        , Element.width <| Element.maximum 600 Element.fill
+                        , Element.centerX
+                        , Element.paddingXY 0 16
+                        ]
+                        [ Element.paragraph [] [ Element.text (NonemptyString.toString qnaSession.name) ]
+                        , questionsView qnaSession.questions
+                        , Element.Input.multiline
+                            [ Element.height <| Element.px 120 ]
+                            { onChange = TypedQuestion
+                            , placeholder = Nothing
+                            , spellcheck = True
+                            , label =
+                                Element.Input.labelAbove
+                                    []
+                                    (Element.text "What do you want to ask?")
+                            , text = success.question
+                            }
+                        , Element.row [ Element.spacing 16 ]
+                            [ Element.Input.button
+                                buttonStyle
+                                { onPress = Just PressedCreateQuestion
+                                , label =
+                                    Element.text "Submit question"
+                                }
+                            , case ( NonemptyString.fromString success.question, success.pressedCreateQuestion ) of
+                                ( Nothing, True ) ->
+                                    Element.paragraph
+                                        [ Element.Font.color <| Element.rgb 0.8 0.3 0.3 ]
+                                        [ Element.text "Write something first!" ]
+
+                                _ ->
+                                    Element.none
+                            ]
+                        ]
             )
         ]
     }
+
+
+questionsView : Dict QuestionId Question -> Element FrontendMsg
+questionsView questions =
+    Dict.toList questions
+        |> List.sortBy (Tuple.second >> .creationTime >> Time.posixToMillis)
+        |> List.map questionView
+        |> Element.column
+            [ Element.spacing 8
+            , Element.height (Element.px 300)
+            , Element.Background.color <| Element.rgb 0.9 0.9 0.9
+            , Element.width Element.fill
+            , Element.Border.rounded 4
+            , Element.scrollbars
+            ]
+
+
+questionView : ( QuestionId, Question ) -> Element FrontendMsg
+questionView ( questionId, question ) =
+    Element.row
+        [ Element.padding 8, Element.spacing 16 ]
+        [ Element.Input.button
+            [ Element.Border.rounded 99999
+            , Element.padding 8
+            , Element.Background.color <| Element.rgb 0.5 0.5 0.5
+            , Element.width <| Element.px 48
+            , Element.height <| Element.px 48
+            , Element.Border.width 2
+            , Element.Border.color <| Element.rgb 0.4 0.4 0.4
+            ]
+            { onPress = Just (PressedToggledUpvote questionId)
+            , label = Element.el [ Element.centerX, Element.centerY ] (Element.text "👍")
+            }
+        , Element.paragraph [] [ Element.text (NonemptyString.toString question.content) ]
+        ]
+
+
+buttonStyle : List (Element.Attr () msg)
+buttonStyle =
+    [ Element.Background.color <| Element.rgb 0.8 0.8 0.8
+    , Element.padding 16
+    , Element.Border.rounded 4
+    ]
