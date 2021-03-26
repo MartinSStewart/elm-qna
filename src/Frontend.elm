@@ -5,8 +5,6 @@ import Browser.Navigation as Nav
 import Element
 import Element.Font
 import Element.Input
-import Html
-import Html.Attributes as Attr
 import Lamdera
 import Network
 import String.Nonempty as NonemptyString exposing (NonemptyString(..))
@@ -41,16 +39,16 @@ init url key =
             )
 
 
-urlDecoder : Url.Parser.Parser (Maybe QnaSessionId -> c) c
+urlDecoder : Url.Parser.Parser (Maybe (CryptographicKey QnaSessionId) -> c) c
 urlDecoder =
     Url.Parser.oneOf
         [ Url.Parser.top |> Url.Parser.map Nothing
-        , Url.Parser.string |> Url.Parser.map (QnaSessionId >> Just)
+        , Url.Parser.string |> Url.Parser.map (CryptographicKey >> Just)
         ]
 
 
-urlEncoder : QnaSessionId -> String
-urlEncoder (QnaSessionId qnaSessionId) =
+urlEncoder : CryptographicKey QnaSessionId -> String
+urlEncoder (CryptographicKey qnaSessionId) =
     "/" ++ qnaSessionId
 
 
@@ -97,12 +95,12 @@ update msg model =
                         Just nonempty ->
                             let
                                 localMsg =
-                                    LocalMsg (CreateQuestion success.qnaSessionId nonempty)
+                                    CreateQuestion nonempty
                             in
                             ( { success
-                                | networkModel = Network.updateFromUser localMsg success.networkModel
+                                | networkModel = Network.updateFromUser (LocalMsg localMsg) success.networkModel
                               }
-                            , Lamdera.sendToBackend localMsg
+                            , Lamdera.sendToBackend (LocalMsgRequest success.qnaSessionId localMsg)
                             )
 
                         Nothing ->
@@ -136,7 +134,10 @@ qnaSessionUpdate msg model =
         LocalMsg (CreateQuestion nonempty) ->
             Debug.todo ""
 
-        ServerMsg (VotesChanged questionId) ->
+        LocalMsg (PinQuestion hostKey questionId) ->
+            Debug.todo ""
+
+        ServerMsg (ToggleUpvoteResponse questionId) ->
             Debug.todo ""
 
         ServerMsg (NewQuestion questionId creationTime nonempty) ->
@@ -145,29 +146,37 @@ qnaSessionUpdate msg model =
         ServerMsg (CreateQuestionResponse questionId creationTime) ->
             Debug.todo ""
 
-        ServerMsg (QuestionReadToggled questionId) ->
+        ServerMsg (PinQuestionResponse _) ->
+            Debug.todo ""
+
+        ServerMsg (VotesChanged _ _) ->
+            Debug.todo ""
+
+        ServerMsg (QuestionPinned _) ->
             Debug.todo ""
 
 
 updateFromBackend : ToFrontend -> FrontendModel -> ( FrontendModel, Cmd FrontendMsg )
 updateFromBackend msg model =
     case msg of
-        ServerMsgResponse serverQnaMsg ->
-            ( case model.remoteData of
-                Success _ qnaState ->
-                    { model
-                        | remoteData =
-                            Network.updateFromBackend
-                                qnaSessionUpdate
-                                (ServerMsg serverQnaMsg)
-                                qnaState
-                                |> Success
-                    }
+        ServerMsgResponse qnaSessionId serverQnaMsg ->
+            updateSuccessState
+                (\success ->
+                    ( if success.qnaSessionId == qnaSessionId then
+                        { success
+                            | networkModel =
+                                Network.updateFromBackend
+                                    qnaSessionUpdate
+                                    (ServerMsg serverQnaMsg)
+                                    success.networkModel
+                        }
 
-                _ ->
-                    model
-            , Cmd.none
-            )
+                      else
+                        success
+                    , Cmd.none
+                    )
+                )
+                model
 
         GetQnaSessionResponse qnaSessionId result ->
             ( case model.remoteData of
@@ -177,7 +186,7 @@ updateFromBackend msg model =
                             | remoteData =
                                 case result of
                                     Ok qnaSession ->
-                                        Success qnaSessionId (Network.init qnaSession)
+                                        Success (initSuccessModel qnaSessionId qnaSession)
 
                                     Err () ->
                                         Failure ()
@@ -185,6 +194,19 @@ updateFromBackend msg model =
 
                     else
                         model
+
+                _ ->
+                    model
+            , Cmd.none
+            )
+
+        CreateQnaSessionResponse qnaSessionId ->
+            ( case model.remoteData of
+                Creating qnaSessionName ->
+                    { model
+                        | remoteData =
+                            Success (initSuccessModel qnaSessionId (initQnaSession qnaSessionName))
+                    }
 
                 _ ->
                     model
@@ -215,10 +237,13 @@ view model =
                 Loading qnaSessionId ->
                     Element.text "Loading..."
 
+                Creating _ ->
+                    Element.text "Creating..."
+
                 Failure error ->
                     Element.paragraph [] [ Element.text "That Q&A session doesn't exist." ]
 
-                Success qnaSessionId networkModel ->
+                Success success ->
                     Debug.todo ""
             )
         ]

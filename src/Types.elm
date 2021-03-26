@@ -19,23 +19,32 @@ type alias FrontendModel =
 
 type RemoteData
     = NotAsked
-    | Loading QnaSessionId
+    | Loading (CryptographicKey QnaSessionId)
     | Creating NonemptyString
     | Failure ()
     | Success SuccessModel
 
 
 type alias SuccessModel =
-    { qnaSessionId : QnaSessionId
+    { qnaSessionId : CryptographicKey QnaSessionId
     , networkModel : NetworkModel QnaMsg QnaSession
     , question : String
     , pressedCreateQuestion : Bool
     }
 
 
+initSuccessModel : CryptographicKey QnaSessionId -> QnaSession -> SuccessModel
+initSuccessModel qnaSessionId qnaSesssion =
+    { qnaSessionId = qnaSessionId
+    , networkModel = Network.init qnaSesssion
+    , question = ""
+    , pressedCreateQuestion = False
+    }
+
+
 type alias BackendModel =
-    { message : String
-    , qnaSessions : Dict QnaSessionId BackendQnaSession
+    { qnaSessions : Dict (CryptographicKey QnaSessionId) BackendQnaSession
+    , keyCounter : Int
     }
 
 
@@ -56,7 +65,36 @@ type alias BackendQnaSession =
     { questions : Dict QuestionId BackendQuestion
     , host : SessionId
     , creationTime : Time.Posix
-    , name : String
+    , name : NonemptyString
+    , connections : Set ClientId
+    , hostKey : CryptographicKey HostKey
+    }
+
+
+backendToFrontendQnaSession : BackendQnaSession -> QnaSession
+backendToFrontendQnaSession qnaSession =
+    { questions = Dict.map (\_ question -> backendToFrontendQuestion question) qnaSession.questions
+    , name = qnaSession.name
+    }
+
+
+backendToFrontendQuestion : BackendQuestion -> Question
+backendToFrontendQuestion backendQuestion =
+    { creationTime = backendQuestion.creationTime
+    , content = backendQuestion.content
+    , isRead = backendQuestion.isRead
+    , votes = Set.size backendQuestion.votes
+    }
+
+
+initBackendQnaSession : CryptographicKey HostKey -> SessionId -> Time.Posix -> NonemptyString -> BackendQnaSession
+initBackendQnaSession hostKey hostSessionId creationTime name =
+    { questions = Dict.empty
+    , host = hostSessionId
+    , creationTime = creationTime
+    , name = name
+    , connections = Set.empty
+    , hostKey = hostKey
     }
 
 
@@ -67,14 +105,17 @@ type QnaMsg
 
 type LocalQnaMsg
     = ToggleUpvote QuestionId
-    | CreateQuestion QnaSessionId NonemptyString
+    | CreateQuestion NonemptyString
+    | PinQuestion (CryptographicKey HostKey) QuestionId
 
 
 type ServerQnaMsg
-    = VotesChanged QuestionId
-    | NewQuestion QuestionId Time.Posix NonemptyString
+    = ToggleUpvoteResponse QuestionId
     | CreateQuestionResponse QuestionId Time.Posix
-    | QuestionReadToggled QuestionId
+    | PinQuestionResponse QuestionId
+    | VotesChanged QuestionId Int
+    | NewQuestion QuestionId Time.Posix NonemptyString
+    | QuestionPinned QuestionId
 
 
 type Status
@@ -83,11 +124,15 @@ type Status
 
 
 type QnaSessionId
-    = QnaSessionId String
+    = QnaSessionId Never
 
 
 type HostKey
-    = HostKey String
+    = HostKey Never
+
+
+type CryptographicKey a
+    = CryptographicKey String
 
 
 type QuestionId
@@ -96,7 +141,7 @@ type QuestionId
 
 type alias Question =
     { creationTime : Time.Posix
-    , content : String
+    , content : NonemptyString
     , isRead : Bool
     , votes : Int
     }
@@ -104,7 +149,7 @@ type alias Question =
 
 type alias BackendQuestion =
     { creationTime : Time.Posix
-    , content : String
+    , content : NonemptyString
     , isRead : Bool
     , votes : Set SessionId
     }
@@ -121,16 +166,18 @@ type FrontendMsg
 
 
 type ToBackend
-    = LocalMsgRequest QnaSessionId LocalQnaMsg
-    | GetQnaSession QnaSessionId
+    = LocalMsgRequest (CryptographicKey QnaSessionId) LocalQnaMsg
+    | GetQnaSession (CryptographicKey QnaSessionId)
     | CreateQnaSession NonemptyString
 
 
 type BackendMsg
     = NoOpBackendMsg
+    | ToBackendWithTime SessionId ClientId ToBackend Time.Posix
+    | UserDisconnected SessionId ClientId
 
 
 type ToFrontend
-    = ServerMsgResponse QnaSessionId ServerQnaMsg
-    | GetQnaSessionResponse QnaSessionId (Result () QnaSession)
-    | CreateQnaSessionResponse QnaSessionId
+    = ServerMsgResponse (CryptographicKey QnaSessionId) ServerQnaMsg
+    | GetQnaSessionResponse (CryptographicKey QnaSessionId) (Result () QnaSession)
+    | CreateQnaSessionResponse (CryptographicKey QnaSessionId)
