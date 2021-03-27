@@ -10,7 +10,6 @@ import Element.Border
 import Element.Font
 import Element.Input
 import Element.Keyed
-import Element.Lazy
 import Html exposing (Html)
 import Html.Attributes
 import Html.Events
@@ -36,7 +35,7 @@ app =
         , onUrlChange = UrlChanged
         , update = update
         , updateFromBackend = updateFromBackend
-        , subscriptions = \m -> Sub.none
+        , subscriptions = \_ -> Time.every 1000 GotCurrentTime
         , view = view
         }
 
@@ -45,12 +44,12 @@ init : Url.Url -> Browser.Navigation.Key -> ( FrontendModel, Cmd FrontendMsg )
 init url key =
     case Url.Parser.parse urlDecoder url of
         Just (Just qnaSessionId) ->
-            ( { key = key, remoteData = Loading qnaSessionId }
+            ( { key = key, remoteData = Loading qnaSessionId, currentTime = Nothing }
             , Lamdera.sendToBackend (GetQnaSession qnaSessionId)
             )
 
         _ ->
-            ( { key = key, remoteData = NotAsked }
+            ( { key = key, remoteData = NotAsked, currentTime = Nothing }
             , Cmd.none
             )
 
@@ -84,7 +83,25 @@ update msg model =
                     )
 
         UrlChanged url ->
-            ( model, Cmd.none )
+            case Url.Parser.parse urlDecoder url of
+                Just Nothing ->
+                    ( model, Browser.Navigation.load "/" )
+
+                Just (Just qnaSessionId) ->
+                    case model.remoteData of
+                        Creating qnaSessionName ->
+                            ( { model
+                                | remoteData =
+                                    Success (initSuccessModel qnaSessionId (initQnaSession qnaSessionName True))
+                              }
+                            , Cmd.none
+                            )
+
+                        _ ->
+                            ( model, Browser.Navigation.load (urlEncoder qnaSessionId) )
+
+                _ ->
+                    ( model, Cmd.none )
 
         NoOpFrontendMsg ->
             ( model, Cmd.none )
@@ -164,6 +181,9 @@ update msg model =
                 )
                 model
 
+        GotCurrentTime currentTime ->
+            ( { model | currentTime = Just currentTime }, Cmd.none )
+
 
 addLocalChange : LocalQnaMsg -> SuccessModel -> ( SuccessModel, Cmd FrontendMsg )
 addLocalChange localMsg success =
@@ -202,6 +222,7 @@ scrollToOf millis id y =
         |> Task.andThen identity
 
 
+step : (number -> Float -> Task x a) -> Int -> Float -> Float -> Time.Posix -> Time.Posix -> Task x a
 step f millis start end startTime now =
     let
         elapsed : Int
@@ -288,7 +309,6 @@ createQuestion maybeTime content qnaSession =
                 , isPinned = Nothing
                 , otherVotes = 0
                 , isUpvoted = False
-                , isNewQuestion = True
                 }
                 qnaSession.questions
     }
@@ -339,7 +359,6 @@ qnaSessionUpdate msg qnaSession =
                         , isPinned = Nothing
                         , otherVotes = 0
                         , isUpvoted = False
-                        , isNewQuestion = True
                         }
                         qnaSession.questions
             }
@@ -440,15 +459,7 @@ updateFromBackend msg model =
             )
 
         CreateQnaSessionResponse qnaSessionId ->
-            ( case model.remoteData of
-                Creating qnaSessionName ->
-                    { model
-                        | remoteData =
-                            Success (initSuccessModel qnaSessionId (initQnaSession qnaSessionName True))
-                    }
-
-                _ ->
-                    model
+            ( model
             , Browser.Navigation.pushUrl model.key (urlEncoder qnaSessionId)
             )
 
@@ -507,11 +518,39 @@ view model =
                             , Element.paddingXY 16 16
                             , Element.height <| Element.maximum 800 Element.fill
                             ]
-                            [ --Element.paragraph [] [ Element.text (NonemptyString.toString qnaSession.name) ]
-                              Element.column
+                            [ Element.column
                                 [ Element.width Element.fill, Element.height Element.fill, Element.spacing 6 ]
-                                [ Element.text "Questions", questionsView qnaSession.isHost qnaSession.questions ]
-                            , questionInputView success
+                                [ Element.text "Questions"
+                                , questionsView
+                                    model.currentTime
+                                    qnaSession.isHost
+                                    qnaSession.questions
+                                ]
+                            , if qnaSession.isHost then
+                                if Dict.isEmpty qnaSession.questions then
+                                    Element.none
+
+                                else
+                                    animatedParagraph
+                                        (Animation.fromTo
+                                            { duration = 2000, options = [] }
+                                            [ Property.opacity 0 ]
+                                            [ Property.opacity 1 ]
+                                        )
+                                        [ Element.Font.size 16 ]
+                                        [ Element.text "Questions will be deleted after 2 days of inactivity. If you want to save them, "
+                                        , Element.download
+                                            [ Element.Font.color <| Element.rgb 0.2 0.2 1
+                                            , Element.Border.widthEach { left = 0, right = 0, top = 0, bottom = 1 }
+                                            , Element.Border.color <| Element.rgba 0 0 0 0
+                                            , Element.mouseOver [ Element.Border.color <| Element.rgb 0.2 0.2 1 ]
+                                            ]
+                                            { url = "", label = Element.text "click here" }
+                                        , Element.text " to download them as a spreadsheet."
+                                        ]
+
+                              else
+                                questionInputView success
                             ]
                         )
             )
@@ -528,7 +567,7 @@ hostBannerView =
         , Element.Font.center
         , Element.spacing 8
         ]
-        [ Element.text "You are the host. To invite people, copy the url address. "
+        [ Element.text "You are the host. To invite people, copy the url in the address bar. "
         , Element.Input.button
             [ Element.Background.color <| Element.rgb 0.8 0.8 0.8
             , Element.paddingXY 8 4
@@ -638,43 +677,15 @@ valiatedQuestion text =
                 Err "Write something first!"
 
 
+errorColor : Element.Color
 errorColor =
     Element.rgb 0.8 0.2 0.2
 
 
-questionsView : Bool -> Dict QuestionId Question -> Element FrontendMsg
-questionsView isHost questions =
-    Dict.toList questions
-        |> List.sortWith
-            (\( _, a ) ( _, b ) ->
-                case ( a.isPinned, b.isPinned ) of
-                    ( Just pinTimeA, Just pinTimeB ) ->
-                        compare (Time.posixToMillis pinTimeA) (Time.posixToMillis pinTimeB)
-
-                    ( Just _, Nothing ) ->
-                        LT
-
-                    ( Nothing, Just _ ) ->
-                        GT
-
-                    ( Nothing, Nothing ) ->
-                        case compare (Question.votes a) (Question.votes b) of
-                            GT ->
-                                LT
-
-                            LT ->
-                                GT
-
-                            EQ ->
-                                compare (Time.posixToMillis a.creationTime) (Time.posixToMillis b.creationTime)
-            )
-        |> List.map
-            (\( (QuestionId (UserId userId) questionIndex) as questionId, question ) ->
-                ( String.fromInt userId ++ " " ++ String.fromInt questionIndex
-                , questionView isHost questionId question
-                )
-            )
-        |> Element.Keyed.column
+questionsView : Maybe Time.Posix -> Bool -> Dict QuestionId Question -> Element FrontendMsg
+questionsView currentTime isHost questions =
+    let
+        containerStyle =
             [ Element.height Element.fill
             , Element.width Element.fill
             , Element.Border.rounded 4
@@ -683,6 +694,50 @@ questionsView isHost questions =
             , Element.Border.width 1
             , Element.Border.color <| Element.rgb 0.5 0.5 0.5
             ]
+    in
+    if Dict.isEmpty questions then
+        Element.el containerStyle
+            (Element.el
+                [ Element.centerX
+                , Element.centerY
+                , Element.Font.size 32
+                , Element.Font.color <| Element.rgb 0.6 0.6 0.6
+                ]
+                (Element.text "No questions yet...")
+            )
+
+    else
+        Dict.toList questions
+            |> List.sortWith
+                (\( _, a ) ( _, b ) ->
+                    case ( a.isPinned, b.isPinned ) of
+                        ( Just pinTimeA, Just pinTimeB ) ->
+                            compare (Time.posixToMillis pinTimeA) (Time.posixToMillis pinTimeB)
+
+                        ( Just _, Nothing ) ->
+                            LT
+
+                        ( Nothing, Just _ ) ->
+                            GT
+
+                        ( Nothing, Nothing ) ->
+                            case compare (Question.votes a) (Question.votes b) of
+                                GT ->
+                                    LT
+
+                                LT ->
+                                    GT
+
+                                EQ ->
+                                    compare (Time.posixToMillis a.creationTime) (Time.posixToMillis b.creationTime)
+                )
+            |> List.map
+                (\( (QuestionId (UserId userId) questionIndex) as questionId, question ) ->
+                    ( String.fromInt userId ++ " " ++ String.fromInt questionIndex
+                    , questionView currentTime isHost questionId question
+                    )
+                )
+            |> Element.Keyed.column containerStyle
 
 
 animatedUi : (List (Element.Attribute msg) -> children -> Element msg) -> Animation -> List (Element.Attribute msg) -> children -> Element msg
@@ -694,9 +749,9 @@ animatedUi =
         }
 
 
-animatedColumn : Animation -> List (Element.Attribute msg) -> List (Element msg) -> Element msg
-animatedColumn =
-    animatedUi Element.column
+animatedParagraph : Animation -> List (Element.Attribute msg) -> List (Element msg) -> Element msg
+animatedParagraph =
+    animatedUi Element.paragraph
 
 
 animatedRow : Animation -> List (Element.Attribute msg) -> List (Element msg) -> Element msg
@@ -704,14 +759,18 @@ animatedRow =
     animatedUi Element.row
 
 
-questionView : Bool -> QuestionId -> Question -> Element FrontendMsg
-questionView isHost questionId question =
+questionView : Maybe Time.Posix -> Bool -> QuestionId -> Question -> Element FrontendMsg
+questionView currentTime isHost questionId question =
     animatedRow
         (Animation.fromTo
-            { duration = 2000, options = [] }
+            { duration = 1500, options = [] }
             [ Property.backgroundColor
                 (if question.isPinned == Nothing then
-                    if question.isNewQuestion then
+                    if
+                        currentTime
+                            |> Maybe.map (\time -> Question.isNewQuestion time question)
+                            |> Maybe.withDefault False
+                    then
                         "lightgreen"
 
                     else
@@ -735,10 +794,12 @@ questionView isHost questionId question =
         , Element.width Element.fill
         ]
         [ upvoteButton questionId question
-        , Element.paragraph [] [ Element.text (NonemptyString.toString question.content) ]
+        , Element.paragraph
+            [ Element.htmlAttribute <| Html.Attributes.style "word-break" "break-word" ]
+            [ Element.text (NonemptyString.toString question.content) ]
         , if isHost then
             Element.Input.button
-                (Element.Font.size 18 :: buttonStyle ++ [ Element.padding 8 ])
+                (buttonStyle ++ [ Element.Font.size 18, Element.padding 8 ])
                 { onPress = Just (PressedTogglePin questionId)
                 , label =
                     Element.text

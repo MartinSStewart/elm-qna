@@ -15,6 +15,7 @@ import Url exposing (Url)
 type alias FrontendModel =
     { key : Key
     , remoteData : RemoteData
+    , currentTime : Maybe Time.Posix
     }
 
 
@@ -91,21 +92,21 @@ getQuestionId questions userId =
 
 backendToFrontendQnaSession : SessionId -> UserId -> BackendQnaSession -> QnaSession
 backendToFrontendQnaSession sessionId userId qnaSession =
-    { questions = Dict.map (\_ question -> Question.backendToFrontend sessionId False question) qnaSession.questions
+    { questions = Dict.map (\_ question -> Question.backendToFrontend sessionId question) qnaSession.questions
     , name = qnaSession.name
     , userId = userId
     , isHost = qnaSession.host == sessionId
     }
 
 
-initBackendQnaSession : SessionId -> Time.Posix -> NonemptyString -> BackendQnaSession
-initBackendQnaSession hostSessionId creationTime name =
+initBackendQnaSession : SessionId -> ClientId -> Time.Posix -> NonemptyString -> BackendQnaSession
+initBackendQnaSession hostSessionId hostClientId creationTime name =
     { questions = Dict.empty
     , host = hostSessionId
     , creationTime = creationTime
     , name = name
-    , connections = Dict.empty
-    , connectionCounter = 0
+    , connections = Dict.singleton hostClientId (UserId 0)
+    , connectionCounter = 1
     }
 
 
@@ -154,6 +155,7 @@ type FrontendMsg
     | PressedToggleUpvote QuestionId
     | PressedCloseHostBanner
     | PressedTogglePin QuestionId
+    | GotCurrentTime Time.Posix
 
 
 type ToBackend

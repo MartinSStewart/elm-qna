@@ -12,7 +12,6 @@ type alias Question =
     , isPinned : Maybe Time.Posix
     , otherVotes : Int
     , isUpvoted : Bool
-    , isNewQuestion : Bool
     }
 
 
@@ -33,12 +32,16 @@ votes question =
         question.otherVotes
 
 
-backendToFrontend : SessionId -> Bool -> BackendQuestion -> Question
-backendToFrontend sessionId isNewQuestion backendQuestion =
+backendToFrontend : SessionId -> BackendQuestion -> Question
+backendToFrontend sessionId backendQuestion =
     { creationTime = backendQuestion.creationTime
     , content = backendQuestion.content
     , isPinned = backendQuestion.isPinned
     , otherVotes = Set.remove sessionId backendQuestion.votes |> Set.size
     , isUpvoted = Set.member sessionId backendQuestion.votes
-    , isNewQuestion = isNewQuestion
     }
+
+
+isNewQuestion : Time.Posix -> Question -> Bool
+isNewQuestion currentTime question =
+    Time.posixToMillis question.creationTime + 1600 > Time.posixToMillis currentTime

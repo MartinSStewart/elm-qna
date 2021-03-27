@@ -166,6 +166,7 @@ updateQnaSession_ sessionId clientId currentTime changeId localQnaMsg qnaSession
                 case Dict.get questionId qnaSession.questions of
                     Just question ->
                         let
+                            pinStatus : Maybe Time.Posix
                             pinStatus =
                                 case question.isPinned of
                                     Just _ ->
@@ -178,9 +179,7 @@ updateQnaSession_ sessionId clientId currentTime changeId localQnaMsg qnaSession
                             | questions =
                                 Dict.insert
                                     questionId
-                                    { question
-                                        | isPinned = pinStatus
-                                    }
+                                    { question | isPinned = pinStatus }
                                     qnaSession.questions
                           }
                         , Dict.keys qnaSession.connections
@@ -238,11 +237,7 @@ updateFromFrontendWithTime sessionId clientId msg model currentTime =
                             Dict.insert
                                 qnaSessionId
                                 { qnaSession
-                                    | connections =
-                                        Dict.insert
-                                            clientId
-                                            userId
-                                            qnaSession.connections
+                                    | connections = Dict.insert clientId userId qnaSession.connections
                                     , connectionCounter = qnaSession.connectionCounter + 1
                                 }
                                 model.qnaSessions
@@ -268,7 +263,7 @@ updateFromFrontendWithTime sessionId clientId msg model currentTime =
                 | qnaSessions =
                     Dict.insert
                         qnaSessionId
-                        (Types.initBackendQnaSession sessionId currentTime qnaSessionName)
+                        (Types.initBackendQnaSession sessionId clientId currentTime qnaSessionName)
                         model2.qnaSessions
               }
             , Lamdera.sendToFrontend clientId (CreateQnaSessionResponse qnaSessionId)
