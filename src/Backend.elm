@@ -80,11 +80,13 @@ updateQnaSession_ :
     SessionId
     -> ClientId
     -> Time.Posix
+    -> ChangeId
     -> LocalQnaMsg
+    -> CryptographicKey QnaSessionId
     -> UserId
     -> BackendQnaSession
-    -> ( BackendQnaSession, List ( ClientId, ServerQnaMsg ) )
-updateQnaSession_ sessionId clientId currentTime localQnaMsg userId qnaSession =
+    -> ( BackendQnaSession, Cmd BackendMsg )
+updateQnaSession_ sessionId clientId currentTime changeId localQnaMsg qnaSessionId userId qnaSession =
     case localQnaMsg of
         ToggleUpvote questionId ->
             case Dict.get questionId qnaSession.questions of
@@ -105,17 +107,20 @@ updateQnaSession_ sessionId clientId currentTime localQnaMsg userId qnaSession =
                         |> List.map
                             (\clientId_ ->
                                 if clientId == clientId_ then
-                                    ( clientId_
-                                    , ToggleUpvoteResponse questionId
-                                    )
+                                    Lamdera.sendToFrontend
+                                        clientId_
+                                        (ServerMsgResponse qnaSessionId (Just changeId) (ToggleUpvoteResponse questionId))
 
                                 else
-                                    ( clientId_, VotesChanged questionId voteCount )
+                                    Lamdera.sendToFrontend
+                                        clientId_
+                                        (ServerMsgResponse qnaSessionId Nothing (VotesChanged questionId voteCount))
                             )
+                        |> Cmd.batch
                     )
 
                 Nothing ->
-                    ( qnaSession, [] )
+                    ( qnaSession, Cmd.none )
 
         CreateQuestion content ->
             let
@@ -138,15 +143,20 @@ updateQnaSession_ sessionId clientId currentTime localQnaMsg userId qnaSession =
                 |> List.map
                     (\clientId_ ->
                         if clientId == clientId_ then
-                            ( clientId_, CreateQuestionResponse questionId currentTime )
+                            Lamdera.sendToFrontend
+                                clientId_
+                                (ServerMsgResponse qnaSessionId (Just changeId) (CreateQuestionResponse questionId currentTime))
 
                         else
-                            ( clientId_, NewQuestion questionId currentTime content )
+                            Lamdera.sendToFrontend
+                                clientId_
+                                (ServerMsgResponse qnaSessionId Nothing (NewQuestion questionId currentTime content))
                     )
+                |> Cmd.batch
             )
 
-        PinQuestion hostKey questionId ->
-            if qnaSession.hostKey == hostKey then
+        PinQuestion questionId ->
+            if qnaSession.host == sessionId then
                 case Dict.get questionId qnaSession.questions of
                     Just question ->
                         ( { qnaSession
@@ -160,18 +170,23 @@ updateQnaSession_ sessionId clientId currentTime localQnaMsg userId qnaSession =
                             |> List.map
                                 (\clientId_ ->
                                     if clientId == clientId_ then
-                                        ( clientId_, PinQuestionResponse questionId )
+                                        Lamdera.sendToFrontend
+                                            clientId_
+                                            (ServerMsgResponse qnaSessionId (Just changeId) (PinQuestionResponse questionId))
 
                                     else
-                                        ( clientId_, QuestionPinned questionId )
+                                        Lamdera.sendToFrontend
+                                            clientId_
+                                            (ServerMsgResponse qnaSessionId Nothing (QuestionPinned questionId))
                                 )
+                            |> Cmd.batch
                         )
 
                     Nothing ->
-                        ( qnaSession, [] )
+                        ( qnaSession, Cmd.none )
 
             else
-                ( qnaSession, [] )
+                ( qnaSession, Cmd.none )
 
 
 updateFromFrontendWithTime :
@@ -183,22 +198,11 @@ updateFromFrontendWithTime :
     -> ( BackendModel, Cmd BackendMsg )
 updateFromFrontendWithTime sessionId clientId msg model currentTime =
     case msg of
-        LocalMsgRequest qnaSessionId localQnaMsg ->
+        LocalMsgRequest qnaSessionId changeId localQnaMsg ->
             updateQnaSession
                 qnaSessionId
                 clientId
-                (\userId qnaSession ->
-                    updateQnaSession_ sessionId clientId currentTime localQnaMsg userId qnaSession
-                        |> Tuple.mapSecond
-                            (\effects ->
-                                List.map
-                                    (\( clientId_, serverMsg ) ->
-                                        Lamdera.sendToFrontend clientId_ (ServerMsgResponse qnaSessionId serverMsg)
-                                    )
-                                    effects
-                                    |> Cmd.batch
-                            )
-                )
+                (updateQnaSession_ sessionId clientId currentTime changeId localQnaMsg qnaSessionId)
                 model
 
         GetQnaSession qnaSessionId ->
@@ -238,16 +242,13 @@ updateFromFrontendWithTime sessionId clientId msg model currentTime =
             let
                 ( model2, qnaSessionId ) =
                     getCryptographicKey model
-
-                ( model3, hostKey ) =
-                    getCryptographicKey model2
             in
-            ( { model3
+            ( { model2
                 | qnaSessions =
                     Dict.insert
                         qnaSessionId
-                        (Types.initBackendQnaSession hostKey sessionId currentTime qnaSessionName)
-                        model3.qnaSessions
+                        (Types.initBackendQnaSession sessionId currentTime qnaSessionName)
+                        model2.qnaSessions
               }
             , Lamdera.sendToFrontend clientId (CreateQnaSessionResponse qnaSessionId)
             )

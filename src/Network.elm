@@ -1,7 +1,5 @@
 module Network exposing (..)
 
-import List.Extra
-
 
 type alias NetworkModel msg model =
     { localMsgs : List msg, serverState : model }
@@ -24,8 +22,8 @@ localState updateFunc localModel =
     List.foldl updateFunc localModel.serverState localModel.localMsgs
 
 
-updateFromBackend : (msg -> model -> model) -> msg -> NetworkModel msg model -> NetworkModel msg model
-updateFromBackend updateFunc msg localModel =
-    { localMsgs = List.Extra.remove msg localModel.localMsgs
+updateFromBackend : (msg -> msg -> Bool) -> (msg -> model -> model) -> msg -> NetworkModel msg model -> NetworkModel msg model
+updateFromBackend msgsAreEqual updateFunc msg localModel =
+    { localMsgs = List.filter (\localMsg -> msgsAreEqual localMsg msg |> not) localModel.localMsgs
     , serverState = updateFunc msg localModel.serverState
     }

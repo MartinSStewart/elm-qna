@@ -27,9 +27,10 @@ type RemoteData
 
 type alias SuccessModel =
     { qnaSessionId : CryptographicKey QnaSessionId
-    , networkModel : NetworkModel QnaMsg QnaSession
+    , networkModel : NetworkModel Change QnaSession
     , question : String
     , pressedCreateQuestion : Bool
+    , localChangeCounter : ChangeId
     }
 
 
@@ -39,6 +40,7 @@ initSuccessModel qnaSessionId qnaSesssion =
     , networkModel = Network.init qnaSesssion
     , question = ""
     , pressedCreateQuestion = False
+    , localChangeCounter = ChangeId 0
     }
 
 
@@ -69,7 +71,6 @@ type alias BackendQnaSession =
     , creationTime : Time.Posix
     , name : NonemptyString
     , connections : Dict ClientId UserId
-    , hostKey : CryptographicKey HostKey
     , connectionCounter : Int
     }
 
@@ -101,27 +102,39 @@ backendToFrontendQuestion sessionId backendQuestion =
     }
 
 
-initBackendQnaSession : CryptographicKey HostKey -> SessionId -> Time.Posix -> NonemptyString -> BackendQnaSession
-initBackendQnaSession hostKey hostSessionId creationTime name =
+initBackendQnaSession : SessionId -> Time.Posix -> NonemptyString -> BackendQnaSession
+initBackendQnaSession hostSessionId creationTime name =
     { questions = Dict.empty
     , host = hostSessionId
     , creationTime = creationTime
     , name = name
     , connections = Dict.empty
-    , hostKey = hostKey
     , connectionCounter = 0
     }
 
 
-type QnaMsg
-    = LocalMsg LocalQnaMsg
-    | ServerMsg ServerQnaMsg
+type Change
+    = LocalChange ChangeId LocalQnaMsg
+    | ServerChange (Maybe ChangeId) ServerQnaMsg
+
+
+changeId : Change -> Maybe ChangeId
+changeId change =
+    case change of
+        LocalChange changeId_ _ ->
+            Just changeId_
+
+        ServerChange (Just changeId_) _ ->
+            Just changeId_
+
+        ServerChange Nothing _ ->
+            Nothing
 
 
 type LocalQnaMsg
     = ToggleUpvote QuestionId
     | CreateQuestion NonemptyString
-    | PinQuestion (CryptographicKey HostKey) QuestionId
+    | PinQuestion QuestionId
 
 
 type ServerQnaMsg
@@ -134,16 +147,12 @@ type ServerQnaMsg
 
 
 type Status
-    = Host HostKey
+    = Host
     | Participant
 
 
 type QnaSessionId
     = QnaSessionId Never
-
-
-type HostKey
-    = HostKey Never
 
 
 type CryptographicKey a
@@ -156,6 +165,15 @@ type UserId
 
 type QuestionId
     = QuestionId UserId Int
+
+
+type ChangeId
+    = ChangeId Int
+
+
+incrementChangeId : ChangeId -> ChangeId
+incrementChangeId (ChangeId changeId_) =
+    changeId_ + 1 |> ChangeId
 
 
 type alias Question =
@@ -186,7 +204,7 @@ type FrontendMsg
 
 
 type ToBackend
-    = LocalMsgRequest (CryptographicKey QnaSessionId) LocalQnaMsg
+    = LocalMsgRequest (CryptographicKey QnaSessionId) ChangeId LocalQnaMsg
     | GetQnaSession (CryptographicKey QnaSessionId)
     | CreateQnaSession NonemptyString
 
@@ -198,6 +216,6 @@ type BackendMsg
 
 
 type ToFrontend
-    = ServerMsgResponse (CryptographicKey QnaSessionId) ServerQnaMsg
+    = ServerMsgResponse (CryptographicKey QnaSessionId) (Maybe ChangeId) ServerQnaMsg
     | GetQnaSessionResponse (CryptographicKey QnaSessionId) (Result () QnaSession)
     | CreateQnaSessionResponse (CryptographicKey QnaSessionId)

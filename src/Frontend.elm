@@ -103,11 +103,16 @@ update msg model =
                                     CreateQuestion nonempty
                             in
                             ( { success
-                                | networkModel = Network.updateFromUser (LocalMsg localMsg) success.networkModel
+                                | networkModel =
+                                    Network.updateFromUser
+                                        (LocalChange success.localChangeCounter localMsg)
+                                        success.networkModel
                                 , question = ""
                                 , pressedCreateQuestion = False
+                                , localChangeCounter = Types.incrementChangeId success.localChangeCounter
                               }
-                            , Lamdera.sendToBackend (LocalMsgRequest success.qnaSessionId localMsg)
+                            , Lamdera.sendToBackend
+                                (LocalMsgRequest success.qnaSessionId success.localChangeCounter localMsg)
                             )
 
                         Nothing ->
@@ -125,9 +130,13 @@ update msg model =
                             ToggleUpvote questionId
                     in
                     ( { success
-                        | networkModel = Network.updateFromUser (LocalMsg localMsg) success.networkModel
+                        | networkModel =
+                            Network.updateFromUser
+                                (LocalChange success.localChangeCounter localMsg)
+                                success.networkModel
+                        , localChangeCounter = Types.incrementChangeId success.localChangeCounter
                       }
-                    , Lamdera.sendToBackend (LocalMsgRequest success.qnaSessionId localMsg)
+                    , Lamdera.sendToBackend (LocalMsgRequest success.qnaSessionId success.localChangeCounter localMsg)
                     )
                 )
                 model
@@ -164,13 +173,13 @@ pinQuestion questionId qnaSession =
     }
 
 
-qnaSessionUpdate : QnaMsg -> QnaSession -> QnaSession
+qnaSessionUpdate : Change -> QnaSession -> QnaSession
 qnaSessionUpdate msg qnaSession =
     case msg of
-        LocalMsg (ToggleUpvote questionId) ->
+        LocalChange _ (ToggleUpvote questionId) ->
             toggleUpvote questionId qnaSession
 
-        LocalMsg (CreateQuestion content) ->
+        LocalChange _ (CreateQuestion content) ->
             let
                 questionId : QuestionId
                 questionId =
@@ -189,13 +198,13 @@ qnaSessionUpdate msg qnaSession =
                         qnaSession.questions
             }
 
-        LocalMsg (PinQuestion _ questionId) ->
+        LocalChange _ (PinQuestion questionId) ->
             pinQuestion questionId qnaSession
 
-        ServerMsg (ToggleUpvoteResponse questionId) ->
+        ServerChange _ (ToggleUpvoteResponse questionId) ->
             toggleUpvote questionId qnaSession
 
-        ServerMsg (NewQuestion questionId creationTime content) ->
+        ServerChange _ (NewQuestion questionId creationTime content) ->
             { qnaSession
                 | questions =
                     Dict.insert questionId
@@ -208,7 +217,7 @@ qnaSessionUpdate msg qnaSession =
                         qnaSession.questions
             }
 
-        ServerMsg (CreateQuestionResponse questionId creationTime) ->
+        ServerChange _ (CreateQuestionResponse questionId creationTime) ->
             { qnaSession
                 | questions =
                     Dict.update
@@ -219,10 +228,10 @@ qnaSessionUpdate msg qnaSession =
                         qnaSession.questions
             }
 
-        ServerMsg (PinQuestionResponse questionId) ->
+        ServerChange _ (PinQuestionResponse questionId) ->
             pinQuestion questionId qnaSession
 
-        ServerMsg (VotesChanged questionId voteCount) ->
+        ServerChange _ (VotesChanged questionId voteCount) ->
             { qnaSession
                 | questions =
                     Dict.update
@@ -233,7 +242,7 @@ qnaSessionUpdate msg qnaSession =
                         qnaSession.questions
             }
 
-        ServerMsg (QuestionPinned questionId) ->
+        ServerChange _ (QuestionPinned questionId) ->
             { qnaSession
                 | questions =
                     Dict.update
@@ -245,18 +254,29 @@ qnaSessionUpdate msg qnaSession =
             }
 
 
+msgsAreEqual : Change -> Change -> Bool
+msgsAreEqual change0 change1 =
+    case ( Types.changeId change0, Types.changeId change1 ) of
+        ( Just changeId0, Just changeId1 ) ->
+            changeId0 == changeId1
+
+        _ ->
+            False
+
+
 updateFromBackend : ToFrontend -> FrontendModel -> ( FrontendModel, Cmd FrontendMsg )
 updateFromBackend msg model =
     case msg of
-        ServerMsgResponse qnaSessionId serverQnaMsg ->
+        ServerMsgResponse qnaSessionId changeId serverQnaMsg ->
             updateSuccessState
                 (\success ->
                     ( if success.qnaSessionId == qnaSessionId then
                         { success
                             | networkModel =
                                 Network.updateFromBackend
+                                    msgsAreEqual
                                     qnaSessionUpdate
-                                    (ServerMsg serverQnaMsg)
+                                    (ServerChange changeId serverQnaMsg)
                                     success.networkModel
                         }
 
