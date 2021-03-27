@@ -392,7 +392,7 @@ updateFromBackend msg model =
                             | remoteData =
                                 case result of
                                     Ok qnaSession ->
-                                        Success (initSuccessModel qnaSessionId (Debug.log "qnaSession" qnaSession))
+                                        Success (initSuccessModel qnaSessionId qnaSession)
 
                                     Err () ->
                                         Failure ()
