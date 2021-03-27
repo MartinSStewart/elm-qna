@@ -10,7 +10,7 @@ import Element.Font
 import Element.Input
 import Html exposing (Html)
 import Lamdera
-import Network
+import Network exposing (Change(..))
 import String.Nonempty as NonemptyString exposing (NonemptyString(..))
 import Time
 import Types exposing (..)
@@ -105,11 +105,12 @@ update msg model =
                             ( { success
                                 | networkModel =
                                     Network.updateFromUser
-                                        (LocalChange success.localChangeCounter localMsg)
+                                        success.localChangeCounter
+                                        localMsg
                                         success.networkModel
                                 , question = ""
                                 , pressedCreateQuestion = False
-                                , localChangeCounter = Types.incrementChangeId success.localChangeCounter
+                                , localChangeCounter = Network.incrementChangeId success.localChangeCounter
                               }
                             , Lamdera.sendToBackend
                                 (LocalMsgRequest success.qnaSessionId success.localChangeCounter localMsg)
@@ -132,9 +133,10 @@ update msg model =
                     ( { success
                         | networkModel =
                             Network.updateFromUser
-                                (LocalChange success.localChangeCounter localMsg)
+                                success.localChangeCounter
+                                localMsg
                                 success.networkModel
-                        , localChangeCounter = Types.incrementChangeId success.localChangeCounter
+                        , localChangeCounter = Network.incrementChangeId success.localChangeCounter
                       }
                     , Lamdera.sendToBackend (LocalMsgRequest success.qnaSessionId success.localChangeCounter localMsg)
                     )
@@ -173,38 +175,64 @@ pinQuestion questionId qnaSession =
     }
 
 
-qnaSessionUpdate : Change -> QnaSession -> QnaSession
+createQuestion : Maybe Time.Posix -> NonemptyString -> QnaSession -> QnaSession
+createQuestion maybeTime content qnaSession =
+    let
+        questionId : QuestionId
+        questionId =
+            Types.getQuestionId qnaSession.questions qnaSession.userId
+    in
+    { qnaSession
+        | questions =
+            Dict.insert
+                questionId
+                { creationTime = Maybe.withDefault (Time.millisToPosix 0) maybeTime
+                , content = content
+                , isRead = False
+                , votes = 0
+                , isUpvoted = False
+                }
+                qnaSession.questions
+    }
+
+
+qnaSessionUpdate : Change LocalQnaMsg ConfirmLocalQnaMsg ServerQnaMsg -> QnaSession -> QnaSession
 qnaSessionUpdate msg qnaSession =
     case msg of
         LocalChange _ (ToggleUpvote questionId) ->
             toggleUpvote questionId qnaSession
 
         LocalChange _ (CreateQuestion content) ->
-            let
-                questionId : QuestionId
-                questionId =
-                    Types.getQuestionId qnaSession.questions qnaSession.userId
-            in
-            { qnaSession
-                | questions =
-                    Dict.insert
-                        questionId
-                        { creationTime = Time.millisToPosix 0
-                        , content = content
-                        , isRead = False
-                        , votes = 0
-                        , isUpvoted = False
-                        }
-                        qnaSession.questions
-            }
+            createQuestion Nothing content qnaSession
 
         LocalChange _ (PinQuestion questionId) ->
             pinQuestion questionId qnaSession
 
-        ServerChange _ (ToggleUpvoteResponse questionId) ->
-            toggleUpvote questionId qnaSession
+        ConfirmLocalChange _ localChange ToggleUpvoteResponse ->
+            case localChange of
+                ToggleUpvote questionId ->
+                    toggleUpvote questionId qnaSession
 
-        ServerChange _ (NewQuestion questionId creationTime content) ->
+                _ ->
+                    qnaSession
+
+        ConfirmLocalChange _ localChange (CreateQuestionResponse creationTime) ->
+            case localChange of
+                CreateQuestion content ->
+                    createQuestion (Just creationTime) content qnaSession
+
+                _ ->
+                    qnaSession
+
+        ConfirmLocalChange _ localChange PinQuestionResponse ->
+            case localChange of
+                PinQuestion questionId ->
+                    pinQuestion questionId qnaSession
+
+                _ ->
+                    qnaSession
+
+        ServerChange (NewQuestion questionId creationTime content) ->
             { qnaSession
                 | questions =
                     Dict.insert questionId
@@ -217,21 +245,7 @@ qnaSessionUpdate msg qnaSession =
                         qnaSession.questions
             }
 
-        ServerChange _ (CreateQuestionResponse questionId creationTime) ->
-            { qnaSession
-                | questions =
-                    Dict.update
-                        questionId
-                        (Maybe.map
-                            (\question -> { question | creationTime = creationTime })
-                        )
-                        qnaSession.questions
-            }
-
-        ServerChange _ (PinQuestionResponse questionId) ->
-            pinQuestion questionId qnaSession
-
-        ServerChange _ (VotesChanged questionId voteCount) ->
+        ServerChange (VotesChanged questionId voteCount) ->
             { qnaSession
                 | questions =
                     Dict.update
@@ -242,7 +256,7 @@ qnaSessionUpdate msg qnaSession =
                         qnaSession.questions
             }
 
-        ServerChange _ (QuestionPinned questionId) ->
+        ServerChange (QuestionPinned questionId) ->
             { qnaSession
                 | questions =
                     Dict.update
@@ -254,29 +268,35 @@ qnaSessionUpdate msg qnaSession =
             }
 
 
-msgsAreEqual : Change -> Change -> Bool
-msgsAreEqual change0 change1 =
-    case ( Types.changeId change0, Types.changeId change1 ) of
-        ( Just changeId0, Just changeId1 ) ->
-            changeId0 == changeId1
-
-        _ ->
-            False
-
-
 updateFromBackend : ToFrontend -> FrontendModel -> ( FrontendModel, Cmd FrontendMsg )
 updateFromBackend msg model =
     case msg of
-        ServerMsgResponse qnaSessionId changeId serverQnaMsg ->
+        ServerMsgResponse qnaSessionId serverQnaMsg ->
             updateSuccessState
                 (\success ->
                     ( if success.qnaSessionId == qnaSessionId then
                         { success
                             | networkModel =
-                                Network.updateFromBackend
-                                    msgsAreEqual
+                                Network.serverChange qnaSessionUpdate serverQnaMsg success.networkModel
+                        }
+
+                      else
+                        success
+                    , Cmd.none
+                    )
+                )
+                model
+
+        LocalConfirmQnaMsgResponse qnaSessionId changeId confirmLocalMsg ->
+            updateSuccessState
+                (\success ->
+                    ( if success.qnaSessionId == qnaSessionId then
+                        { success
+                            | networkModel =
+                                Network.confirmLocalChange
                                     qnaSessionUpdate
-                                    (ServerChange changeId serverQnaMsg)
+                                    changeId
+                                    confirmLocalMsg
                                     success.networkModel
                         }
 

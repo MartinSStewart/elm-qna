@@ -3,6 +3,7 @@ module Backend exposing (..)
 import AssocList as Dict
 import Env
 import Lamdera exposing (ClientId, SessionId)
+import Network exposing (ChangeId)
 import Set
 import Set.Extra as Set
 import Sha256
@@ -109,12 +110,12 @@ updateQnaSession_ sessionId clientId currentTime changeId localQnaMsg qnaSession
                                 if clientId == clientId_ then
                                     Lamdera.sendToFrontend
                                         clientId_
-                                        (ServerMsgResponse qnaSessionId (Just changeId) (ToggleUpvoteResponse questionId))
+                                        (LocalConfirmQnaMsgResponse qnaSessionId changeId ToggleUpvoteResponse)
 
                                 else
                                     Lamdera.sendToFrontend
                                         clientId_
-                                        (ServerMsgResponse qnaSessionId Nothing (VotesChanged questionId voteCount))
+                                        (ServerMsgResponse qnaSessionId (VotesChanged questionId voteCount))
                             )
                         |> Cmd.batch
                     )
@@ -145,12 +146,12 @@ updateQnaSession_ sessionId clientId currentTime changeId localQnaMsg qnaSession
                         if clientId == clientId_ then
                             Lamdera.sendToFrontend
                                 clientId_
-                                (ServerMsgResponse qnaSessionId (Just changeId) (CreateQuestionResponse questionId currentTime))
+                                (LocalConfirmQnaMsgResponse qnaSessionId changeId (CreateQuestionResponse currentTime))
 
                         else
                             Lamdera.sendToFrontend
                                 clientId_
-                                (ServerMsgResponse qnaSessionId Nothing (NewQuestion questionId currentTime content))
+                                (ServerMsgResponse qnaSessionId (NewQuestion questionId currentTime content))
                     )
                 |> Cmd.batch
             )
@@ -172,12 +173,16 @@ updateQnaSession_ sessionId clientId currentTime changeId localQnaMsg qnaSession
                                     if clientId == clientId_ then
                                         Lamdera.sendToFrontend
                                             clientId_
-                                            (ServerMsgResponse qnaSessionId (Just changeId) (PinQuestionResponse questionId))
+                                            (LocalConfirmQnaMsgResponse
+                                                qnaSessionId
+                                                changeId
+                                                PinQuestionResponse
+                                            )
 
                                     else
                                         Lamdera.sendToFrontend
                                             clientId_
-                                            (ServerMsgResponse qnaSessionId Nothing (QuestionPinned questionId))
+                                            (ServerMsgResponse qnaSessionId (QuestionPinned questionId))
                                 )
                             |> Cmd.batch
                         )

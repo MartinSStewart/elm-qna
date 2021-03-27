@@ -4,7 +4,7 @@ import AssocList as Dict exposing (Dict)
 import Browser exposing (UrlRequest)
 import Browser.Navigation exposing (Key)
 import Lamdera exposing (ClientId, SessionId)
-import Network exposing (NetworkModel)
+import Network exposing (ChangeId, NetworkModel)
 import Set exposing (Set)
 import String.Nonempty exposing (NonemptyString)
 import Time
@@ -27,7 +27,7 @@ type RemoteData
 
 type alias SuccessModel =
     { qnaSessionId : CryptographicKey QnaSessionId
-    , networkModel : NetworkModel Change QnaSession
+    , networkModel : NetworkModel LocalQnaMsg ConfirmLocalQnaMsg ServerQnaMsg QnaSession
     , question : String
     , pressedCreateQuestion : Bool
     , localChangeCounter : ChangeId
@@ -40,7 +40,7 @@ initSuccessModel qnaSessionId qnaSesssion =
     , networkModel = Network.init qnaSesssion
     , question = ""
     , pressedCreateQuestion = False
-    , localChangeCounter = ChangeId 0
+    , localChangeCounter = Network.initChangeId
     }
 
 
@@ -113,35 +113,20 @@ initBackendQnaSession hostSessionId creationTime name =
     }
 
 
-type Change
-    = LocalChange ChangeId LocalQnaMsg
-    | ServerChange (Maybe ChangeId) ServerQnaMsg
-
-
-changeId : Change -> Maybe ChangeId
-changeId change =
-    case change of
-        LocalChange changeId_ _ ->
-            Just changeId_
-
-        ServerChange (Just changeId_) _ ->
-            Just changeId_
-
-        ServerChange Nothing _ ->
-            Nothing
-
-
 type LocalQnaMsg
     = ToggleUpvote QuestionId
     | CreateQuestion NonemptyString
     | PinQuestion QuestionId
 
 
+type ConfirmLocalQnaMsg
+    = ToggleUpvoteResponse
+    | CreateQuestionResponse Time.Posix
+    | PinQuestionResponse
+
+
 type ServerQnaMsg
-    = ToggleUpvoteResponse QuestionId
-    | CreateQuestionResponse QuestionId Time.Posix
-    | PinQuestionResponse QuestionId
-    | VotesChanged QuestionId Int
+    = VotesChanged QuestionId Int
     | NewQuestion QuestionId Time.Posix NonemptyString
     | QuestionPinned QuestionId
 
@@ -165,15 +150,6 @@ type UserId
 
 type QuestionId
     = QuestionId UserId Int
-
-
-type ChangeId
-    = ChangeId Int
-
-
-incrementChangeId : ChangeId -> ChangeId
-incrementChangeId (ChangeId changeId_) =
-    changeId_ + 1 |> ChangeId
 
 
 type alias Question =
@@ -216,6 +192,7 @@ type BackendMsg
 
 
 type ToFrontend
-    = ServerMsgResponse (CryptographicKey QnaSessionId) (Maybe ChangeId) ServerQnaMsg
+    = ServerMsgResponse (CryptographicKey QnaSessionId) ServerQnaMsg
+    | LocalConfirmQnaMsgResponse (CryptographicKey QnaSessionId) ChangeId ConfirmLocalQnaMsg
     | GetQnaSessionResponse (CryptographicKey QnaSessionId) (Result () QnaSession)
     | CreateQnaSessionResponse (CryptographicKey QnaSessionId)
