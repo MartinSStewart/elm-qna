@@ -112,20 +112,20 @@ initBackendQnaSession hostSessionId creationTime name =
 type LocalQnaMsg
     = ToggleUpvote QuestionId
     | CreateQuestion NonemptyString
-    | PinQuestion QuestionId
+    | TogglePin QuestionId Time.Posix
 
 
 type ConfirmLocalQnaMsg
     = ToggleUpvoteResponse
     | CreateQuestionResponse Time.Posix
-    | PinQuestionResponse
+    | PinQuestionResponse Time.Posix
 
 
 type ServerQnaMsg
     = VoteAdded QuestionId
     | VoteRemoved QuestionId
     | NewQuestion QuestionId Time.Posix NonemptyString
-    | QuestionPinned QuestionId
+    | QuestionPinned QuestionId (Maybe Time.Posix)
 
 
 type QnaSessionId
@@ -151,8 +151,9 @@ type FrontendMsg
     | PressedCreateQnaSession
     | TypedQuestion String
     | PressedCreateQuestion
-    | PressedToggledUpvote QuestionId
+    | PressedToggleUpvote QuestionId
     | PressedCloseHostBanner
+    | PressedTogglePin QuestionId
 
 
 type ToBackend

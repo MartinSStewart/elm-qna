@@ -140,7 +140,7 @@ updateQnaSession_ sessionId clientId currentTime changeId localQnaMsg qnaSession
                         questionId
                         { creationTime = currentTime
                         , content = content
-                        , isPinned = False
+                        , isPinned = Nothing
                         , votes = Set.empty
                         }
                         qnaSession.questions
@@ -161,15 +161,26 @@ updateQnaSession_ sessionId clientId currentTime changeId localQnaMsg qnaSession
                 |> Cmd.batch
             )
 
-        PinQuestion questionId ->
+        TogglePin questionId _ ->
             if qnaSession.host == sessionId then
                 case Dict.get questionId qnaSession.questions of
                     Just question ->
+                        let
+                            pinStatus =
+                                case question.isPinned of
+                                    Just _ ->
+                                        Nothing
+
+                                    Nothing ->
+                                        Just currentTime
+                        in
                         ( { qnaSession
                             | questions =
                                 Dict.insert
                                     questionId
-                                    { question | isPinned = not question.isPinned }
+                                    { question
+                                        | isPinned = pinStatus
+                                    }
                                     qnaSession.questions
                           }
                         , Dict.keys qnaSession.connections
@@ -181,13 +192,13 @@ updateQnaSession_ sessionId clientId currentTime changeId localQnaMsg qnaSession
                                             (LocalConfirmQnaMsgResponse
                                                 qnaSessionId
                                                 changeId
-                                                PinQuestionResponse
+                                                (PinQuestionResponse currentTime)
                                             )
 
                                     else
                                         Lamdera.sendToFrontend
                                             clientId_
-                                            (ServerMsgResponse qnaSessionId (QuestionPinned questionId))
+                                            (ServerMsgResponse qnaSessionId (QuestionPinned questionId pinStatus))
                                 )
                             |> Cmd.batch
                         )

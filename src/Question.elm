@@ -9,7 +9,7 @@ import Time
 type alias Question =
     { creationTime : Time.Posix
     , content : NonemptyString
-    , isPinned : Bool
+    , isPinned : Maybe Time.Posix
     , otherVotes : Int
     , isUpvoted : Bool
     , isNewQuestion : Bool
@@ -19,7 +19,7 @@ type alias Question =
 type alias BackendQuestion =
     { creationTime : Time.Posix
     , content : NonemptyString
-    , isPinned : Bool
+    , isPinned : Maybe Time.Posix
     , votes : Set SessionId
     }
 

@@ -143,30 +143,40 @@ update msg model =
                 )
                 model
 
-        PressedToggledUpvote questionId ->
-            updateSuccessState
-                (\success ->
-                    let
-                        localMsg =
-                            ToggleUpvote questionId
-                    in
-                    ( { success
-                        | networkModel =
-                            Network.updateFromUser
-                                success.localChangeCounter
-                                localMsg
-                                success.networkModel
-                        , localChangeCounter = Network.incrementChangeId success.localChangeCounter
-                      }
-                    , Lamdera.sendToBackend (LocalMsgRequest success.qnaSessionId success.localChangeCounter localMsg)
-                    )
-                )
-                model
+        PressedToggleUpvote questionId ->
+            updateSuccessState (addLocalChange (ToggleUpvote questionId)) model
 
         PressedCloseHostBanner ->
             updateSuccessState
                 (\success -> ( { success | closedHostBanner = True }, Cmd.none ))
                 model
+
+        PressedTogglePin questionId ->
+            updateSuccessState
+                (let
+                    localMsg =
+                        TogglePin
+                            questionId
+                            -- We just need a time value bigger than everything else until the backend can give us the actual time
+                            (Time.millisToPosix 999999999999999999)
+                 in
+                 addLocalChange localMsg
+                )
+                model
+
+
+addLocalChange : LocalQnaMsg -> SuccessModel -> ( SuccessModel, Cmd FrontendMsg )
+addLocalChange localMsg success =
+    ( { success
+        | networkModel =
+            Network.updateFromUser
+                success.localChangeCounter
+                localMsg
+                success.networkModel
+        , localChangeCounter = Network.incrementChangeId success.localChangeCounter
+      }
+    , Lamdera.sendToBackend (LocalMsgRequest success.qnaSessionId success.localChangeCounter localMsg)
+    )
 
 
 questionsViewId : String
@@ -239,13 +249,25 @@ toggleUpvote questionId qnaSession =
     }
 
 
-pinQuestion : QuestionId -> QnaSession -> QnaSession
-pinQuestion questionId qnaSession =
+pinQuestion : QuestionId -> Time.Posix -> QnaSession -> QnaSession
+pinQuestion questionId currentTime qnaSession =
     { qnaSession
         | questions =
             Dict.update
                 questionId
-                (Maybe.map (\question -> { question | isPinned = not question.isPinned }))
+                (Maybe.map
+                    (\question ->
+                        { question
+                            | isPinned =
+                                case question.isPinned of
+                                    Just _ ->
+                                        Nothing
+
+                                    Nothing ->
+                                        Just currentTime
+                        }
+                    )
+                )
                 qnaSession.questions
     }
 
@@ -263,7 +285,7 @@ createQuestion maybeTime content qnaSession =
                 questionId
                 { creationTime = Maybe.withDefault (Time.millisToPosix 0) maybeTime
                 , content = content
-                , isPinned = False
+                , isPinned = Nothing
                 , otherVotes = 0
                 , isUpvoted = False
                 , isNewQuestion = True
@@ -281,8 +303,8 @@ qnaSessionUpdate msg qnaSession =
         LocalChange _ (CreateQuestion content) ->
             createQuestion Nothing content qnaSession
 
-        LocalChange _ (PinQuestion questionId) ->
-            pinQuestion questionId qnaSession
+        LocalChange _ (TogglePin questionId pinTime) ->
+            pinQuestion questionId pinTime qnaSession
 
         ConfirmLocalChange _ localChange ToggleUpvoteResponse ->
             case localChange of
@@ -300,10 +322,10 @@ qnaSessionUpdate msg qnaSession =
                 _ ->
                     qnaSession
 
-        ConfirmLocalChange _ localChange PinQuestionResponse ->
+        ConfirmLocalChange _ localChange (PinQuestionResponse pinTime) ->
             case localChange of
-                PinQuestion questionId ->
-                    pinQuestion questionId qnaSession
+                TogglePin questionId _ ->
+                    pinQuestion questionId pinTime qnaSession
 
                 _ ->
                     qnaSession
@@ -314,7 +336,7 @@ qnaSessionUpdate msg qnaSession =
                     Dict.insert questionId
                         { creationTime = creationTime
                         , content = content
-                        , isPinned = False
+                        , isPinned = Nothing
                         , otherVotes = 0
                         , isUpvoted = False
                         , isNewQuestion = True
@@ -344,13 +366,13 @@ qnaSessionUpdate msg qnaSession =
                         qnaSession.questions
             }
 
-        ServerChange (QuestionPinned questionId) ->
+        ServerChange (QuestionPinned questionId maybePinned) ->
             { qnaSession
                 | questions =
                     Dict.update
                         questionId
                         (Maybe.map
-                            (\question -> { question | isPinned = not question.isPinned })
+                            (\question -> { question | isPinned = maybePinned })
                         )
                         qnaSession.questions
             }
@@ -488,7 +510,7 @@ view model =
                             [ --Element.paragraph [] [ Element.text (NonemptyString.toString qnaSession.name) ]
                               Element.column
                                 [ Element.width Element.fill, Element.height Element.fill, Element.spacing 6 ]
-                                [ Element.text "Questions", questionsView qnaSession.questions ]
+                                [ Element.text "Questions", questionsView qnaSession.isHost qnaSession.questions ]
                             , questionInputView success
                             ]
                         )
@@ -620,15 +642,36 @@ errorColor =
     Element.rgb 0.8 0.2 0.2
 
 
-questionsView : Dict QuestionId Question -> Element FrontendMsg
-questionsView questions =
+questionsView : Bool -> Dict QuestionId Question -> Element FrontendMsg
+questionsView isHost questions =
     Dict.toList questions
-        |> List.sortBy (Tuple.second >> .creationTime >> Time.posixToMillis)
-        |> List.sortBy (Tuple.second >> Question.votes >> negate)
+        |> List.sortWith
+            (\( _, a ) ( _, b ) ->
+                case ( a.isPinned, b.isPinned ) of
+                    ( Just pinTimeA, Just pinTimeB ) ->
+                        compare (Time.posixToMillis pinTimeA) (Time.posixToMillis pinTimeB)
+
+                    ( Just _, Nothing ) ->
+                        LT
+
+                    ( Nothing, Just _ ) ->
+                        GT
+
+                    ( Nothing, Nothing ) ->
+                        case compare (Question.votes a) (Question.votes b) of
+                            GT ->
+                                LT
+
+                            LT ->
+                                GT
+
+                            EQ ->
+                                compare (Time.posixToMillis a.creationTime) (Time.posixToMillis b.creationTime)
+            )
         |> List.map
             (\( (QuestionId (UserId userId) questionIndex) as questionId, question ) ->
                 ( String.fromInt userId ++ " " ++ String.fromInt questionIndex
-                , questionView questionId question
+                , questionView isHost questionId question
                 )
             )
         |> Element.Keyed.column
@@ -661,22 +704,55 @@ animatedRow =
     animatedUi Element.row
 
 
-questionView : QuestionId -> Question -> Element FrontendMsg
-questionView questionId question =
-    (if question.isNewQuestion then
-        animatedRow
-            (Animation.fromTo
-                { duration = 2000, options = [] }
-                [ Property.backgroundColor "lightgreen" ]
-                [ Property.backgroundColor "white" ]
-            )
+questionView : Bool -> QuestionId -> Question -> Element FrontendMsg
+questionView isHost questionId question =
+    animatedRow
+        (Animation.fromTo
+            { duration = 2000, options = [] }
+            [ Property.backgroundColor
+                (if question.isPinned == Nothing then
+                    if question.isNewQuestion then
+                        "lightgreen"
 
-     else
-        Element.row
-    )
-        [ Element.padding 8, Element.spacing 16, Element.width Element.fill ]
+                    else
+                        "white"
+
+                 else
+                    "lightyellow"
+                )
+            ]
+            [ Property.backgroundColor
+                (if question.isPinned == Nothing then
+                    "white"
+
+                 else
+                    "lightyellow"
+                )
+            ]
+        )
+        [ Element.padding 8
+        , Element.spacing 16
+        , Element.width Element.fill
+        ]
         [ upvoteButton questionId question
         , Element.paragraph [] [ Element.text (NonemptyString.toString question.content) ]
+        , if isHost then
+            Element.Input.button
+                (Element.Font.size 18 :: buttonStyle ++ [ Element.padding 8 ])
+                { onPress = Just (PressedTogglePin questionId)
+                , label =
+                    Element.text
+                        (case question.isPinned of
+                            Just _ ->
+                                "Unpin"
+
+                            Nothing ->
+                                "Pin"
+                        )
+                }
+
+          else
+            Element.none
         ]
 
 
@@ -696,7 +772,7 @@ upvoteButton questionId question =
         , Element.Border.width 2
         , Element.Border.color <| Element.rgb 0.4 0.4 0.4
         ]
-        { onPress = Just (PressedToggledUpvote questionId)
+        { onPress = Just (PressedToggleUpvote questionId)
         , label =
             Element.row
                 [ Element.centerX, Element.centerY, Element.Font.size 18, Element.spacing 2 ]
