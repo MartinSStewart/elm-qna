@@ -132,6 +132,7 @@ update msg model =
                                             scrollToOf 200 questionsViewId (scene.height - viewport.height)
                                         )
                                     |> Task.attempt (always NoOpFrontendMsg)
+                                , Browser.Dom.blur questionInputId |> Task.attempt (always NoOpFrontendMsg)
                                 ]
                             )
 
@@ -162,10 +163,20 @@ update msg model =
                 )
                 model
 
+        PressedCloseHostBanner ->
+            updateSuccessState
+                (\success -> ( { success | closedHostBanner = True }, Cmd.none ))
+                model
+
 
 questionsViewId : String
 questionsViewId =
     "questions-view-id"
+
+
+questionInputId : String
+questionInputId =
+    "question-input-id"
 
 
 scrollToOf : Int -> String -> Float -> Task Browser.Dom.Error ()
@@ -234,7 +245,7 @@ pinQuestion questionId qnaSession =
         | questions =
             Dict.update
                 questionId
-                (Maybe.map (\question -> { question | isRead = not question.isRead }))
+                (Maybe.map (\question -> { question | isPinned = not question.isPinned }))
                 qnaSession.questions
     }
 
@@ -252,7 +263,7 @@ createQuestion maybeTime content qnaSession =
                 questionId
                 { creationTime = Maybe.withDefault (Time.millisToPosix 0) maybeTime
                 , content = content
-                , isRead = False
+                , isPinned = False
                 , otherVotes = 0
                 , isUpvoted = False
                 , isNewQuestion = True
@@ -303,7 +314,7 @@ qnaSessionUpdate msg qnaSession =
                     Dict.insert questionId
                         { creationTime = creationTime
                         , content = content
-                        , isRead = False
+                        , isPinned = False
                         , otherVotes = 0
                         , isUpvoted = False
                         , isNewQuestion = True
@@ -339,7 +350,7 @@ qnaSessionUpdate msg qnaSession =
                     Dict.update
                         questionId
                         (Maybe.map
-                            (\question -> { question | isRead = not question.isRead })
+                            (\question -> { question | isPinned = not question.isPinned })
                         )
                         qnaSession.questions
             }
@@ -411,7 +422,7 @@ updateFromBackend msg model =
                 Creating qnaSessionName ->
                     { model
                         | remoteData =
-                            Success (initSuccessModel qnaSessionId (initQnaSession qnaSessionName))
+                            Success (initSuccessModel qnaSessionId (initQnaSession qnaSessionName True))
                     }
 
                 _ ->
@@ -432,7 +443,7 @@ view model =
                         [ Element.centerX, Element.centerY, Element.spacing 16, Element.paddingXY 16 0 ]
                         [ Element.paragraph
                             [ Element.centerX ]
-                            [ Element.text "If you want to join a Q&A session, please use the link your host has provided." ]
+                            [ Element.text "To join a Q&A session, please use the link your host has provided." ]
                         , Element.el [ Element.Font.size 24, Element.centerX ] (Element.text "OR")
                         , Element.Input.button
                             (Element.centerX :: buttonStyle)
@@ -456,19 +467,59 @@ view model =
                         qnaSession =
                             Network.localState qnaSessionUpdate success.networkModel
                     in
-                    Element.column
-                        [ Element.spacing 16
-                        , Element.width <| Element.maximum 800 Element.fill
-                        , Element.centerX
-                        , Element.paddingXY 16 16
+                    Element.el
+                        [ Element.inFront
+                            (if success.closedHostBanner || not qnaSession.isHost then
+                                Element.none
+
+                             else
+                                hostBannerView
+                            )
+                        , Element.width Element.fill
+                        , Element.height Element.fill
                         ]
-                        [ Element.paragraph [] [ Element.text (NonemptyString.toString qnaSession.name) ]
-                        , questionsView qnaSession.questions
-                        , questionInputView success
-                        ]
+                        (Element.column
+                            [ Element.spacing 16
+                            , Element.width <| Element.maximum 800 Element.fill
+                            , Element.centerX
+                            , Element.paddingXY 16 16
+                            , Element.height <| Element.maximum 800 Element.fill
+                            ]
+                            [ --Element.paragraph [] [ Element.text (NonemptyString.toString qnaSession.name) ]
+                              Element.column
+                                [ Element.width Element.fill, Element.height Element.fill, Element.spacing 6 ]
+                                [ Element.text "Questions", questionsView qnaSession.questions ]
+                            , questionInputView success
+                            ]
+                        )
             )
         ]
     }
+
+
+hostBannerView : Element FrontendMsg
+hostBannerView =
+    Element.paragraph
+        [ Element.width Element.fill
+        , Element.Background.color <| Element.rgb 0.9 0.9 0.7
+        , Element.paddingXY 8 12
+        , Element.Font.center
+        , Element.spacing 8
+        ]
+        [ Element.text "You are the host. To invite people, copy the url address. "
+        , Element.Input.button
+            [ Element.Background.color <| Element.rgb 0.8 0.8 0.8
+            , Element.paddingXY 8 4
+            , Element.Border.rounded 4
+            ]
+            { onPress = Just PressedCloseHostBanner
+            , label = Element.text "OK"
+            }
+        ]
+
+
+domain =
+    "https://question-and-answer.lamdera.app/"
 
 
 maxQuestionChars : number
@@ -520,6 +571,7 @@ questionInputView success =
                                         Json.Decode.fail ""
                                 )
                         )
+                , Element.htmlAttribute <| Html.Attributes.id questionInputId
                 ]
                 { onChange = TypedQuestion
                 , placeholder = Nothing
@@ -572,14 +624,15 @@ questionsView : Dict QuestionId Question -> Element FrontendMsg
 questionsView questions =
     Dict.toList questions
         |> List.sortBy (Tuple.second >> .creationTime >> Time.posixToMillis)
+        |> List.sortBy (Tuple.second >> Question.votes >> negate)
         |> List.map
-            (\( questionId, question ) ->
-                ( NonemptyString.toString question.content
+            (\( (QuestionId (UserId userId) questionIndex) as questionId, question ) ->
+                ( String.fromInt userId ++ " " ++ String.fromInt questionIndex
                 , questionView questionId question
                 )
             )
         |> Element.Keyed.column
-            [ Element.height (Element.px 300)
+            [ Element.height Element.fill
             , Element.width Element.fill
             , Element.Border.rounded 4
             , Element.scrollbars
@@ -622,30 +675,35 @@ questionView questionId question =
         Element.row
     )
         [ Element.padding 8, Element.spacing 16, Element.width Element.fill ]
-        [ Element.Input.button
-            [ Element.Border.rounded 999
-            , Element.padding 8
-            , Element.Background.color <|
-                if question.isUpvoted then
-                    Element.rgb 0.5 0.5 0.5
-
-                else
-                    Element.rgb 0.9 0.9 0.9
-            , Element.width <| Element.px 56
-            , Element.height <| Element.px 56
-            , Element.Border.width 2
-            , Element.Border.color <| Element.rgb 0.4 0.4 0.4
-            ]
-            { onPress = Just (PressedToggledUpvote questionId)
-            , label =
-                Element.el
-                    [ Element.centerX, Element.centerY ]
-                    (Element.text
-                        ("👍" ++ String.fromInt (Question.votes question))
-                    )
-            }
+        [ upvoteButton questionId question
         , Element.paragraph [] [ Element.text (NonemptyString.toString question.content) ]
         ]
+
+
+upvoteButton : QuestionId -> Question -> Element FrontendMsg
+upvoteButton questionId question =
+    Element.Input.button
+        [ Element.Border.rounded 999
+        , Element.padding 8
+        , Element.Background.color <|
+            if question.isUpvoted then
+                Element.rgb 0.65 0.65 0.65
+
+            else
+                Element.rgb 0.9 0.9 0.9
+        , Element.width <| Element.px 56
+        , Element.height <| Element.px 56
+        , Element.Border.width 2
+        , Element.Border.color <| Element.rgb 0.4 0.4 0.4
+        ]
+        { onPress = Just (PressedToggledUpvote questionId)
+        , label =
+            Element.row
+                [ Element.centerX, Element.centerY, Element.Font.size 18, Element.spacing 2 ]
+                [ Element.text (String.fromInt (Question.votes question))
+                , Element.el [ Element.Font.size 16 ] (Element.text "❤️")
+                ]
+        }
 
 
 buttonStyle : List (Element.Attr () msg)

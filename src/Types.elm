@@ -32,6 +32,7 @@ type alias SuccessModel =
     , question : String
     , pressedCreateQuestion : Bool
     , localChangeCounter : ChangeId
+    , closedHostBanner : Bool
     }
 
 
@@ -42,6 +43,7 @@ initSuccessModel qnaSessionId qnaSesssion =
     , question = ""
     , pressedCreateQuestion = False
     , localChangeCounter = Network.initChangeId
+    , closedHostBanner = False
     }
 
 
@@ -55,14 +57,16 @@ type alias QnaSession =
     { questions : Dict QuestionId Question
     , name : NonemptyString
     , userId : UserId
+    , isHost : Bool
     }
 
 
-initQnaSession : NonemptyString -> QnaSession
-initQnaSession name =
+initQnaSession : NonemptyString -> Bool -> QnaSession
+initQnaSession name isHost =
     { questions = Dict.empty
     , name = name
     , userId = UserId 0
+    , isHost = isHost
     }
 
 
@@ -90,6 +94,7 @@ backendToFrontendQnaSession sessionId userId qnaSession =
     { questions = Dict.map (\_ question -> Question.backendToFrontend sessionId False question) qnaSession.questions
     , name = qnaSession.name
     , userId = userId
+    , isHost = qnaSession.host == sessionId
     }
 
 
@@ -123,11 +128,6 @@ type ServerQnaMsg
     | QuestionPinned QuestionId
 
 
-type Status
-    = Host
-    | Participant
-
-
 type QnaSessionId
     = QnaSessionId Never
 
@@ -152,6 +152,7 @@ type FrontendMsg
     | TypedQuestion String
     | PressedCreateQuestion
     | PressedToggledUpvote QuestionId
+    | PressedCloseHostBanner
 
 
 type ToBackend

@@ -140,7 +140,7 @@ updateQnaSession_ sessionId clientId currentTime changeId localQnaMsg qnaSession
                         questionId
                         { creationTime = currentTime
                         , content = content
-                        , isRead = False
+                        , isPinned = False
                         , votes = Set.empty
                         }
                         qnaSession.questions
@@ -169,7 +169,7 @@ updateQnaSession_ sessionId clientId currentTime changeId localQnaMsg qnaSession
                             | questions =
                                 Dict.insert
                                     questionId
-                                    { question | isRead = not question.isRead }
+                                    { question | isPinned = not question.isPinned }
                                     qnaSession.questions
                           }
                         , Dict.keys qnaSession.connections
@@ -251,7 +251,7 @@ updateFromFrontendWithTime sessionId clientId msg model currentTime =
         CreateQnaSession qnaSessionName ->
             let
                 ( model2, qnaSessionId ) =
-                    getCryptographicKey model
+                    getShortCryptographicKey model
             in
             ( { model2
                 | qnaSessions =
@@ -264,8 +264,8 @@ updateFromFrontendWithTime sessionId clientId msg model currentTime =
             )
 
 
-getCryptographicKey : BackendModel -> ( BackendModel, CryptographicKey a )
-getCryptographicKey model =
+getShortCryptographicKey : BackendModel -> ( BackendModel, CryptographicKey a )
+getShortCryptographicKey model =
     ( { model | keyCounter = model.keyCounter + 1 }
-    , Env.secretKey ++ String.fromInt model.keyCounter |> Sha256.sha224 |> CryptographicKey
+    , Env.secretKey ++ String.fromInt model.keyCounter |> Sha256.sha224 |> String.left 8 |> CryptographicKey
     )

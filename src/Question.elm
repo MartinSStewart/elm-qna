@@ -9,7 +9,7 @@ import Time
 type alias Question =
     { creationTime : Time.Posix
     , content : NonemptyString
-    , isRead : Bool
+    , isPinned : Bool
     , otherVotes : Int
     , isUpvoted : Bool
     , isNewQuestion : Bool
@@ -19,7 +19,7 @@ type alias Question =
 type alias BackendQuestion =
     { creationTime : Time.Posix
     , content : NonemptyString
-    , isRead : Bool
+    , isPinned : Bool
     , votes : Set SessionId
     }
 
@@ -37,7 +37,7 @@ backendToFrontend : SessionId -> Bool -> BackendQuestion -> Question
 backendToFrontend sessionId isNewQuestion backendQuestion =
     { creationTime = backendQuestion.creationTime
     , content = backendQuestion.content
-    , isRead = backendQuestion.isRead
+    , isPinned = backendQuestion.isPinned
     , otherVotes = Set.remove sessionId backendQuestion.votes |> Set.size
     , isUpvoted = Set.member sessionId backendQuestion.votes
     , isNewQuestion = isNewQuestion
