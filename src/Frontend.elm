@@ -2,16 +2,27 @@ module Frontend exposing (..)
 
 import AssocList as Dict exposing (Dict)
 import Browser exposing (UrlRequest(..))
+import Browser.Dom
 import Browser.Navigation
 import Element exposing (Element)
 import Element.Background
 import Element.Border
 import Element.Font
 import Element.Input
+import Element.Keyed
+import Element.Lazy
 import Html exposing (Html)
+import Html.Attributes
+import Html.Events
+import Json.Decode
 import Lamdera
 import Network exposing (Change(..))
+import Question exposing (Question)
+import Simple.Animation as Animation exposing (Animation)
+import Simple.Animation.Animated as Animated
+import Simple.Animation.Property as Property
 import String.Nonempty as NonemptyString exposing (NonemptyString(..))
+import Task exposing (Task)
 import Time
 import Types exposing (..)
 import Url
@@ -96,8 +107,8 @@ update msg model =
         PressedCreateQuestion ->
             updateSuccessState
                 (\success ->
-                    case NonemptyString.fromString success.question of
-                        Just nonempty ->
+                    case valiatedQuestion success.question of
+                        Ok nonempty ->
                             let
                                 localMsg =
                                     CreateQuestion nonempty
@@ -112,11 +123,19 @@ update msg model =
                                 , pressedCreateQuestion = False
                                 , localChangeCounter = Network.incrementChangeId success.localChangeCounter
                               }
-                            , Lamdera.sendToBackend
-                                (LocalMsgRequest success.qnaSessionId success.localChangeCounter localMsg)
+                            , Cmd.batch
+                                [ Lamdera.sendToBackend
+                                    (LocalMsgRequest success.qnaSessionId success.localChangeCounter localMsg)
+                                , Browser.Dom.getViewportOf questionsViewId
+                                    |> Task.andThen
+                                        (\{ scene, viewport } ->
+                                            scrollToOf 200 questionsViewId (scene.height - viewport.height)
+                                        )
+                                    |> Task.attempt (always NoOpFrontendMsg)
+                                ]
                             )
 
-                        Nothing ->
+                        Err _ ->
                             ( { success | pressedCreateQuestion = True }
                             , Cmd.none
                             )
@@ -144,6 +163,49 @@ update msg model =
                 model
 
 
+questionsViewId : String
+questionsViewId =
+    "questions-view-id"
+
+
+scrollToOf : Int -> String -> Float -> Task Browser.Dom.Error ()
+scrollToOf millis id y =
+    Task.map2
+        (\{ viewport } startTime ->
+            Task.andThen
+                (step (Browser.Dom.setViewportOf id) millis viewport.y y startTime)
+                Time.now
+        )
+        (Browser.Dom.getViewportOf id)
+        Time.now
+        |> Task.andThen identity
+
+
+step f millis start end startTime now =
+    let
+        elapsed : Int
+        elapsed =
+            Time.posixToMillis now - Time.posixToMillis startTime
+    in
+    f 0 (position millis start end elapsed)
+        |> Task.andThen
+            (if elapsed < millis then
+                \_ -> Time.now |> Task.andThen (step f millis start end startTime)
+
+             else
+                Task.succeed
+            )
+
+
+position : Int -> Float -> Float -> Int -> Float
+position millis start end elapsed =
+    if elapsed < millis then
+        start + (end - start) * (toFloat elapsed / toFloat millis)
+
+    else
+        end
+
+
 updateSuccessState : (SuccessModel -> ( SuccessModel, Cmd FrontendMsg )) -> FrontendModel -> ( FrontendModel, Cmd FrontendMsg )
 updateSuccessState updateFunc model =
     case model.remoteData of
@@ -155,6 +217,7 @@ updateSuccessState updateFunc model =
             ( model, Cmd.none )
 
 
+toggleUpvote : QuestionId -> QnaSession -> QnaSession
 toggleUpvote questionId qnaSession =
     { qnaSession
         | questions =
@@ -165,6 +228,7 @@ toggleUpvote questionId qnaSession =
     }
 
 
+pinQuestion : QuestionId -> QnaSession -> QnaSession
 pinQuestion questionId qnaSession =
     { qnaSession
         | questions =
@@ -189,8 +253,9 @@ createQuestion maybeTime content qnaSession =
                 { creationTime = Maybe.withDefault (Time.millisToPosix 0) maybeTime
                 , content = content
                 , isRead = False
-                , votes = 0
+                , otherVotes = 0
                 , isUpvoted = False
+                , isNewQuestion = True
                 }
                 qnaSession.questions
     }
@@ -239,19 +304,31 @@ qnaSessionUpdate msg qnaSession =
                         { creationTime = creationTime
                         , content = content
                         , isRead = False
-                        , votes = 0
+                        , otherVotes = 0
                         , isUpvoted = False
+                        , isNewQuestion = True
                         }
                         qnaSession.questions
             }
 
-        ServerChange (VotesChanged questionId voteCount) ->
+        ServerChange (VoteAdded questionId) ->
             { qnaSession
                 | questions =
                     Dict.update
                         questionId
                         (Maybe.map
-                            (\question -> { question | votes = voteCount })
+                            (\question -> { question | otherVotes = question.otherVotes + 1 })
+                        )
+                        qnaSession.questions
+            }
+
+        ServerChange (VoteRemoved questionId) ->
+            { qnaSession
+                | questions =
+                    Dict.update
+                        questionId
+                        (Maybe.map
+                            (\question -> { question | otherVotes = question.otherVotes - 1 })
                         )
                         qnaSession.questions
             }
@@ -345,7 +422,7 @@ updateFromBackend msg model =
 
 view : FrontendModel -> { title : String, body : List (Html FrontendMsg) }
 view model =
-    { title = "Questions & Answers"
+    { title = "Q&A"
     , body =
         [ Element.layout
             []
@@ -370,7 +447,7 @@ view model =
                 Creating _ ->
                     Element.text "Creating..."
 
-                Failure error ->
+                Failure () ->
                     Element.paragraph [] [ Element.text "That Q&A session doesn't exist." ]
 
                 Success success ->
@@ -380,69 +457,180 @@ view model =
                             Network.localState qnaSessionUpdate success.networkModel
                     in
                     Element.column
-                        [ Element.spacing 8
+                        [ Element.spacing 16
                         , Element.width <| Element.maximum 800 Element.fill
                         , Element.centerX
-                        , Element.paddingXY 0 16
+                        , Element.paddingXY 16 16
                         ]
                         [ Element.paragraph [] [ Element.text (NonemptyString.toString qnaSession.name) ]
                         , questionsView qnaSession.questions
-                        , Element.Input.multiline
-                            [ Element.height <| Element.px 120 ]
-                            { onChange = TypedQuestion
-                            , placeholder = Nothing
-                            , spellcheck = True
-                            , label =
-                                Element.Input.labelAbove
-                                    []
-                                    (Element.text "What do you want to ask?")
-                            , text = success.question
-                            }
-                        , Element.row [ Element.spacing 16 ]
-                            [ Element.Input.button
-                                buttonStyle
-                                { onPress = Just PressedCreateQuestion
-                                , label =
-                                    Element.text "Submit question"
-                                }
-                            , case ( NonemptyString.fromString success.question, success.pressedCreateQuestion ) of
-                                ( Nothing, True ) ->
-                                    Element.paragraph
-                                        [ Element.Font.color <| Element.rgb 0.8 0.3 0.3 ]
-                                        [ Element.text "Write something first!" ]
-
-                                _ ->
-                                    Element.none
-                            ]
+                        , questionInputView success
                         ]
             )
         ]
     }
 
 
+maxQuestionChars : number
+maxQuestionChars =
+    200
+
+
+questionInputView : SuccessModel -> Element FrontendMsg
+questionInputView success =
+    Element.column
+        [ Element.width Element.fill, Element.spacing 16 ]
+        [ Element.el
+            [ Element.inFront <|
+                Element.el
+                    [ Element.alignBottom
+                    , Element.alignRight
+                    , Element.Font.color <|
+                        if String.length success.question > maxQuestionChars then
+                            errorColor
+
+                        else
+                            Element.rgb 0.2 0.2 0.2
+                    , Element.Font.size 18
+                    , Element.moveLeft 24
+                    , Element.moveUp 4
+                    ]
+                    (Element.text
+                        (String.fromInt (String.length success.question)
+                            ++ "/"
+                            ++ String.fromInt maxQuestionChars
+                        )
+                    )
+            , Element.width Element.fill
+            ]
+            (Element.Input.multiline
+                [ Element.height <| Element.px 120
+                , Element.htmlAttribute <|
+                    Html.Events.preventDefaultOn "keydown"
+                        (Json.Decode.map3 (\key shift ctrl -> ( key, shift, ctrl ))
+                            (Json.Decode.field "key" Json.Decode.string)
+                            (Json.Decode.field "shiftKey" Json.Decode.bool)
+                            (Json.Decode.field "ctrlKey" Json.Decode.bool)
+                            |> Json.Decode.andThen
+                                (\( key, shift, ctrl ) ->
+                                    if key == "Enter" && not shift && not ctrl then
+                                        Json.Decode.succeed ( PressedCreateQuestion, True )
+
+                                    else
+                                        Json.Decode.fail ""
+                                )
+                        )
+                ]
+                { onChange = TypedQuestion
+                , placeholder = Nothing
+                , spellcheck = True
+                , label =
+                    Element.Input.labelAbove
+                        []
+                        (Element.text "What do you want to ask?")
+                , text = success.question
+                }
+            )
+        , Element.row [ Element.spacing 16 ]
+            [ Element.Input.button
+                buttonStyle
+                { onPress = Just PressedCreateQuestion
+                , label =
+                    Element.text "Submit question"
+                }
+            , case ( valiatedQuestion success.question, success.pressedCreateQuestion ) of
+                ( Err error, True ) ->
+                    Element.paragraph
+                        [ Element.Font.color errorColor ]
+                        [ Element.text error ]
+
+                _ ->
+                    Element.none
+            ]
+        ]
+
+
+valiatedQuestion : String -> Result String NonemptyString
+valiatedQuestion text =
+    if String.length text > maxQuestionChars then
+        Err "Your question is too long"
+
+    else
+        case NonemptyString.fromString (String.trim text) of
+            Just nonempty ->
+                Ok nonempty
+
+            Nothing ->
+                Err "Write something first!"
+
+
+errorColor =
+    Element.rgb 0.8 0.2 0.2
+
+
 questionsView : Dict QuestionId Question -> Element FrontendMsg
 questionsView questions =
     Dict.toList questions
         |> List.sortBy (Tuple.second >> .creationTime >> Time.posixToMillis)
-        |> List.map questionView
-        |> Element.column
-            [ Element.spacing 8
-            , Element.height (Element.px 300)
-            , Element.Background.color <| Element.rgb 0.9 0.9 0.9
+        |> List.map
+            (\( questionId, question ) ->
+                ( NonemptyString.toString question.content
+                , questionView questionId question
+                )
+            )
+        |> Element.Keyed.column
+            [ Element.height (Element.px 300)
             , Element.width Element.fill
             , Element.Border.rounded 4
             , Element.scrollbars
+            , Element.htmlAttribute <| Html.Attributes.id questionsViewId
+            , Element.Border.width 1
+            , Element.Border.color <| Element.rgb 0.5 0.5 0.5
             ]
 
 
-questionView : ( QuestionId, Question ) -> Element FrontendMsg
-questionView ( questionId, question ) =
-    Element.row
-        [ Element.padding 8, Element.spacing 16 ]
+animatedUi : (List (Element.Attribute msg) -> children -> Element msg) -> Animation -> List (Element.Attribute msg) -> children -> Element msg
+animatedUi =
+    Animated.ui
+        { behindContent = Element.behindContent
+        , htmlAttribute = Element.htmlAttribute
+        , html = Element.html
+        }
+
+
+animatedColumn : Animation -> List (Element.Attribute msg) -> List (Element msg) -> Element msg
+animatedColumn =
+    animatedUi Element.column
+
+
+animatedRow : Animation -> List (Element.Attribute msg) -> List (Element msg) -> Element msg
+animatedRow =
+    animatedUi Element.row
+
+
+questionView : QuestionId -> Question -> Element FrontendMsg
+questionView questionId question =
+    (if question.isNewQuestion then
+        animatedRow
+            (Animation.fromTo
+                { duration = 2000, options = [] }
+                [ Property.backgroundColor "lightgreen" ]
+                [ Property.backgroundColor "white" ]
+            )
+
+     else
+        Element.row
+    )
+        [ Element.padding 8, Element.spacing 16, Element.width Element.fill ]
         [ Element.Input.button
-            [ Element.Border.rounded 99999
+            [ Element.Border.rounded 999
             , Element.padding 8
-            , Element.Background.color <| Element.rgb 0.5 0.5 0.5
+            , Element.Background.color <|
+                if question.isUpvoted then
+                    Element.rgb 0.5 0.5 0.5
+
+                else
+                    Element.rgb 0.9 0.9 0.9
             , Element.width <| Element.px 56
             , Element.height <| Element.px 56
             , Element.Border.width 2
@@ -453,7 +641,7 @@ questionView ( questionId, question ) =
                 Element.el
                     [ Element.centerX, Element.centerY ]
                     (Element.text
-                        ("👍" ++ String.fromInt question.votes)
+                        ("👍" ++ String.fromInt (Question.votes question))
                     )
             }
         , Element.paragraph [] [ Element.text (NonemptyString.toString question.content) ]

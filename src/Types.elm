@@ -5,6 +5,7 @@ import Browser exposing (UrlRequest)
 import Browser.Navigation exposing (Key)
 import Lamdera exposing (ClientId, SessionId)
 import Network exposing (ChangeId, NetworkModel)
+import Question exposing (BackendQuestion, Question)
 import Set exposing (Set)
 import String.Nonempty exposing (NonemptyString)
 import Time
@@ -86,19 +87,9 @@ getQuestionId questions userId =
 
 backendToFrontendQnaSession : SessionId -> UserId -> BackendQnaSession -> QnaSession
 backendToFrontendQnaSession sessionId userId qnaSession =
-    { questions = Dict.map (\_ question -> backendToFrontendQuestion sessionId question) qnaSession.questions
+    { questions = Dict.map (\_ question -> Question.backendToFrontend sessionId False question) qnaSession.questions
     , name = qnaSession.name
     , userId = userId
-    }
-
-
-backendToFrontendQuestion : SessionId -> BackendQuestion -> Question
-backendToFrontendQuestion sessionId backendQuestion =
-    { creationTime = backendQuestion.creationTime
-    , content = backendQuestion.content
-    , isRead = backendQuestion.isRead
-    , votes = Set.size backendQuestion.votes
-    , isUpvoted = Set.member sessionId backendQuestion.votes
     }
 
 
@@ -126,7 +117,8 @@ type ConfirmLocalQnaMsg
 
 
 type ServerQnaMsg
-    = VotesChanged QuestionId Int
+    = VoteAdded QuestionId
+    | VoteRemoved QuestionId
     | NewQuestion QuestionId Time.Posix NonemptyString
     | QuestionPinned QuestionId
 
@@ -150,23 +142,6 @@ type UserId
 
 type QuestionId
     = QuestionId UserId Int
-
-
-type alias Question =
-    { creationTime : Time.Posix
-    , content : NonemptyString
-    , isRead : Bool
-    , votes : Int
-    , isUpvoted : Bool
-    }
-
-
-type alias BackendQuestion =
-    { creationTime : Time.Posix
-    , content : NonemptyString
-    , isRead : Bool
-    , votes : Set SessionId
-    }
 
 
 type FrontendMsg

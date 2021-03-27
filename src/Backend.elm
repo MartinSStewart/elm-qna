@@ -4,6 +4,7 @@ import AssocList as Dict
 import Env
 import Lamdera exposing (ClientId, SessionId)
 import Network exposing (ChangeId)
+import Question exposing (BackendQuestion)
 import Set
 import Set.Extra as Set
 import Sha256
@@ -97,9 +98,13 @@ updateQnaSession_ sessionId clientId currentTime changeId localQnaMsg qnaSession
                         question2 =
                             { question | votes = Set.toggle sessionId question.votes }
 
-                        voteCount : Int
-                        voteCount =
-                            Set.size question2.votes
+                        serverMsg : ServerQnaMsg
+                        serverMsg =
+                            if Set.member sessionId question.votes then
+                                VoteRemoved questionId
+
+                            else
+                                VoteAdded questionId
                     in
                     ( { qnaSession
                         | questions = Dict.insert questionId question2 qnaSession.questions
@@ -115,7 +120,7 @@ updateQnaSession_ sessionId clientId currentTime changeId localQnaMsg qnaSession
                                 else
                                     Lamdera.sendToFrontend
                                         clientId_
-                                        (ServerMsgResponse qnaSessionId (VotesChanged questionId voteCount))
+                                        (ServerMsgResponse qnaSessionId serverMsg)
                             )
                         |> Cmd.batch
                     )
