@@ -62,6 +62,16 @@ type alias QnaSession =
     }
 
 
+lastActivity : BackendQnaSession -> Time.Posix
+lastActivity qnaSession =
+    List.maximum
+        (Time.posixToMillis qnaSession.creationTime
+            :: List.map (.creationTime >> Time.posixToMillis) (Dict.values qnaSession.questions)
+        )
+        |> Maybe.map Time.millisToPosix
+        |> Maybe.withDefault qnaSession.creationTime
+
+
 initQnaSession : NonemptyString -> Bool -> QnaSession
 initQnaSession name isHost =
     { questions = Dict.empty
@@ -156,6 +166,7 @@ type FrontendMsg
     | PressedCloseHostBanner
     | PressedTogglePin QuestionId
     | GotCurrentTime Time.Posix
+    | PressedDownloadQuestions
 
 
 type ToBackend
@@ -168,6 +179,7 @@ type BackendMsg
     = NoOpBackendMsg
     | ToBackendWithTime SessionId ClientId ToBackend Time.Posix
     | UserDisconnected SessionId ClientId
+    | CheckSessions Time.Posix
 
 
 type ToFrontend

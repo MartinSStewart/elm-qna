@@ -4,12 +4,14 @@ import AssocList as Dict exposing (Dict)
 import Browser exposing (UrlRequest(..))
 import Browser.Dom
 import Browser.Navigation
+import Csv.Encode
 import Element exposing (Element)
 import Element.Background
 import Element.Border
 import Element.Font
 import Element.Input
 import Element.Keyed
+import File.Download
 import Html exposing (Html)
 import Html.Attributes
 import Html.Events
@@ -183,6 +185,31 @@ update msg model =
 
         GotCurrentTime currentTime ->
             ( { model | currentTime = Just currentTime }, Cmd.none )
+
+        PressedDownloadQuestions ->
+            updateSuccessState
+                (\success ->
+                    ( success
+                    , File.Download.string
+                        "questions.csv"
+                        "text/csv"
+                        (Csv.Encode.encode
+                            { encoder =
+                                Csv.Encode.withFieldNames
+                                    (\question ->
+                                        [ ( "votes", String.fromInt (Question.votes question) )
+                                        , ( "question", NonemptyString.toString question.content )
+                                        ]
+                                    )
+                            , fieldSeparator = ','
+                            }
+                            (Dict.values (Network.localState qnaSessionUpdate success.networkModel).questions
+                                |> List.sortBy (.creationTime >> Time.posixToMillis)
+                            )
+                        )
+                    )
+                )
+                model
 
 
 addLocalChange : LocalQnaMsg -> SuccessModel -> ( SuccessModel, Cmd FrontendMsg )
@@ -539,13 +566,13 @@ view model =
                                         )
                                         [ Element.Font.size 16 ]
                                         [ Element.text "Questions will be deleted after 2 days of inactivity. If you want to save them, "
-                                        , Element.download
+                                        , Element.Input.button
                                             [ Element.Font.color <| Element.rgb 0.2 0.2 1
                                             , Element.Border.widthEach { left = 0, right = 0, top = 0, bottom = 1 }
                                             , Element.Border.color <| Element.rgba 0 0 0 0
                                             , Element.mouseOver [ Element.Border.color <| Element.rgb 0.2 0.2 1 ]
                                             ]
-                                            { url = "", label = Element.text "click here" }
+                                            { onPress = Just PressedDownloadQuestions, label = Element.text "click here" }
                                         , Element.text " to download them as a spreadsheet."
                                         ]
 

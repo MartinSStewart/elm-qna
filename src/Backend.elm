@@ -1,9 +1,11 @@
 module Backend exposing (..)
 
 import AssocList as Dict
+import Duration
 import Env
 import Lamdera exposing (ClientId, SessionId)
 import Network exposing (ChangeId)
+import Quantity
 import Question exposing (BackendQuestion)
 import Set
 import Set.Extra as Set
@@ -18,8 +20,15 @@ app =
         { init = init
         , update = update
         , updateFromFrontend = updateFromFrontend
-        , subscriptions = \_ -> Lamdera.onDisconnect UserDisconnected
+        , subscriptions = subscriptions
         }
+
+
+subscriptions _ =
+    Sub.batch
+        [ Lamdera.onDisconnect UserDisconnected
+        , Time.every (24 * 60 * 60 * 1000) CheckSessions
+        ]
 
 
 init : ( BackendModel, Cmd BackendMsg )
@@ -44,6 +53,20 @@ update msg model =
                     Dict.map
                         (\_ qnaSession ->
                             { qnaSession | connections = Dict.remove clientId qnaSession.connections }
+                        )
+                        model.qnaSessions
+              }
+            , Cmd.none
+            )
+
+        CheckSessions currentTime ->
+            ( { model
+                | qnaSessions =
+                    Dict.filter
+                        (\_ qnaSession ->
+                            Duration.addTo (lastActivity qnaSession) (Duration.days 2)
+                                |> Duration.from currentTime
+                                |> Quantity.lessThan Quantity.zero
                         )
                         model.qnaSessions
               }
