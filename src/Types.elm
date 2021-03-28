@@ -3,10 +3,10 @@ module Types exposing (..)
 import AssocList as Dict exposing (Dict)
 import Browser exposing (UrlRequest)
 import Browser.Navigation exposing (Key)
+import Id exposing (CryptographicKey, QnaSessionId, UserId(..))
 import Lamdera exposing (ClientId, SessionId)
 import Network exposing (ChangeId, NetworkModel)
-import Question exposing (BackendQuestion, Question)
-import Set exposing (Set)
+import Question exposing (BackendQuestion, Question, QuestionId(..))
 import String.Nonempty exposing (NonemptyString)
 import Time
 import Url exposing (Url)
@@ -124,12 +124,14 @@ type LocalQnaMsg
     = ToggleUpvote QuestionId
     | CreateQuestion NonemptyString
     | TogglePin QuestionId Time.Posix
+    | DeleteQuestion QuestionId
 
 
 type ConfirmLocalQnaMsg
     = ToggleUpvoteResponse
     | CreateQuestionResponse Time.Posix
     | PinQuestionResponse Time.Posix
+    | DeleteQuestionResponse
 
 
 type ServerQnaMsg
@@ -137,22 +139,7 @@ type ServerQnaMsg
     | VoteRemoved QuestionId
     | NewQuestion QuestionId Time.Posix NonemptyString
     | QuestionPinned QuestionId (Maybe Time.Posix)
-
-
-type QnaSessionId
-    = QnaSessionId Never
-
-
-type CryptographicKey a
-    = CryptographicKey String
-
-
-type UserId
-    = UserId Int
-
-
-type QuestionId
-    = QuestionId UserId Int
+    | QuestionDeleted QuestionId
 
 
 type FrontendMsg
@@ -167,6 +154,7 @@ type FrontendMsg
     | PressedTogglePin QuestionId
     | GotCurrentTime Time.Posix
     | PressedDownloadQuestions
+    | PressedDeleteQuestion QuestionId
 
 
 type ToBackend

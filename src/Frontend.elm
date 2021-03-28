@@ -15,10 +15,11 @@ import File.Download
 import Html exposing (Html)
 import Html.Attributes
 import Html.Events
+import Id exposing (CryptographicKey(..), QnaSessionId, UserId(..))
 import Json.Decode
 import Lamdera
 import Network exposing (Change(..))
-import Question exposing (Question)
+import Question exposing (Question, QuestionId)
 import Simple.Animation as Animation exposing (Animation)
 import Simple.Animation.Animated as Animated
 import Simple.Animation.Property as Property
@@ -28,19 +29,15 @@ import Time
 import Types
     exposing
         ( ConfirmLocalQnaMsg(..)
-        , CryptographicKey(..)
         , FrontendModel
         , FrontendMsg(..)
         , FrontendStatus(..)
         , InQnaSession_
         , LocalQnaMsg(..)
         , QnaSession
-        , QnaSessionId
-        , QuestionId(..)
         , ServerQnaMsg(..)
         , ToBackend(..)
         , ToFrontend(..)
-        , UserId(..)
         )
 import Url
 import Url.Parser
@@ -196,8 +193,7 @@ update msg model =
                     localMsg =
                         TogglePin
                             questionId
-                            -- We just need a time value bigger than everything else until the backend can give us the actual time
-                            (Time.millisToPosix 999999999999999999)
+                            (Maybe.withDefault (Time.millisToPosix 0) model.currentTime)
                  in
                  addLocalChange localMsg
                 )
@@ -228,6 +224,17 @@ update msg model =
                             )
                         )
                     )
+                )
+                model
+
+        PressedDeleteQuestion questionId ->
+            updateInQnaSession
+                (let
+                    localMsg =
+                        DeleteQuestion
+                            questionId
+                 in
+                 addLocalChange localMsg
                 )
                 model
 
@@ -361,6 +368,11 @@ createQuestion maybeTime content qnaSession =
     }
 
 
+deleteQuestion : QuestionId -> QnaSession -> QnaSession
+deleteQuestion questionId qnaSession =
+    { qnaSession | questions = Dict.remove questionId qnaSession.questions }
+
+
 qnaSessionUpdate : Change LocalQnaMsg ConfirmLocalQnaMsg ServerQnaMsg -> QnaSession -> QnaSession
 qnaSessionUpdate msg qnaSession =
     case msg of
@@ -372,6 +384,9 @@ qnaSessionUpdate msg qnaSession =
 
         LocalChange _ (TogglePin questionId pinTime) ->
             pinQuestion questionId pinTime qnaSession
+
+        LocalChange _ (DeleteQuestion questionId) ->
+            deleteQuestion questionId qnaSession
 
         ConfirmLocalChange _ localChange ToggleUpvoteResponse ->
             case localChange of
@@ -393,6 +408,14 @@ qnaSessionUpdate msg qnaSession =
             case localChange of
                 TogglePin questionId _ ->
                     pinQuestion questionId pinTime qnaSession
+
+                _ ->
+                    qnaSession
+
+        ConfirmLocalChange _ localChange DeleteQuestionResponse ->
+            case localChange of
+                DeleteQuestion questionId ->
+                    deleteQuestion questionId qnaSession
 
                 _ ->
                     qnaSession
@@ -442,6 +465,9 @@ qnaSessionUpdate msg qnaSession =
                         )
                         qnaSession.questions
             }
+
+        ServerChange (QuestionDeleted questionId) ->
+            deleteQuestion questionId qnaSession
 
 
 updateFromBackend : ToFrontend -> FrontendModel -> ( FrontendModel, Cmd FrontendMsg )
@@ -571,6 +597,7 @@ view model =
                                 , questionsView
                                     model.currentTime
                                     qnaSession.isHost
+                                    qnaSession.userId
                                     qnaSession.questions
                                 ]
                             , if qnaSession.isHost then
@@ -729,8 +756,8 @@ errorColor =
     Element.rgb 0.8 0.2 0.2
 
 
-questionsView : Maybe Time.Posix -> Bool -> Dict QuestionId Question -> Element FrontendMsg
-questionsView currentTime isHost questions =
+questionsView : Maybe Time.Posix -> Bool -> UserId -> Dict QuestionId Question -> Element FrontendMsg
+questionsView currentTime isHost userId questions =
     let
         containerStyle =
             [ Element.height Element.fill
@@ -752,7 +779,7 @@ questionsView currentTime isHost questions =
                 |> List.sortBy (\( _, pinTime, _ ) -> Time.posixToMillis pinTime)
                 |> List.map
                     (\( questionId, _, question ) ->
-                        keyedQuestion False ( questionId, question )
+                        keyedQuestion False True ( questionId, question )
                     )
 
         unpinnedQuestions : List ( String, Element FrontendMsg )
@@ -773,13 +800,13 @@ questionsView currentTime isHost questions =
                     )
                 |> List.indexedMap
                     (\index value ->
-                        keyedQuestion (index == 0 && not (List.isEmpty pinnedQuestions)) value
+                        keyedQuestion (index == 0 && not (List.isEmpty pinnedQuestions)) False value
                     )
 
-        keyedQuestion : Bool -> ( QuestionId, Question ) -> ( String, Element FrontendMsg )
-        keyedQuestion isFirstUnpinnedQuestion ( (QuestionId (UserId userId) questionIndex) as questionId, question ) =
-            ( String.fromInt userId ++ " " ++ String.fromInt questionIndex
-            , questionView isFirstUnpinnedQuestion currentTime isHost questionId question
+        keyedQuestion : Bool -> Bool -> ( QuestionId, Question ) -> ( String, Element FrontendMsg )
+        keyedQuestion isFirstUnpinnedQuestion isPinned ( questionId, question ) =
+            ( Question.questionIdToString questionId
+            , questionView isFirstUnpinnedQuestion isPinned currentTime isHost userId questionId question
             )
     in
     if Dict.isEmpty questions then
@@ -818,8 +845,8 @@ animatedRow =
     animatedUi Element.row
 
 
-questionView : Bool -> Maybe Time.Posix -> Bool -> QuestionId -> Question -> Element FrontendMsg
-questionView isFirstUnpinnedQuestion currentTime isHost questionId question =
+questionView : Bool -> Bool -> Maybe Time.Posix -> Bool -> UserId -> QuestionId -> Question -> Element FrontendMsg
+questionView isFirstUnpinnedQuestion isPinned currentTime isHost userId questionId question =
     animatedRow
         (Animation.fromTo
             { duration = 1500, options = [] }
@@ -848,8 +875,8 @@ questionView isFirstUnpinnedQuestion currentTime isHost questionId question =
                 )
             ]
         )
-        [ Element.padding 8
-        , Element.spacing 16
+        [ Element.paddingEach { left = 8, right = 12, top = 8, bottom = 8 }
+        , Element.spacing 8
         , Element.width Element.fill
         , Element.inFront
             (if isFirstUnpinnedQuestion then
@@ -905,6 +932,14 @@ questionView isFirstUnpinnedQuestion currentTime isHost questionId question =
                         )
                 }
 
+          else if Question.isCreator userId questionId && not isPinned then
+            Element.Input.button
+                (buttonStyle ++ [ Element.Font.size 16, Element.paddingXY 4 6 ])
+                { onPress = Just (PressedDeleteQuestion questionId)
+                , label =
+                    Element.text "🗑️"
+                }
+
           else
             Element.none
         ]
@@ -921,17 +956,17 @@ upvoteButton questionId question =
 
             else
                 Element.rgb 0.9 0.9 0.9
-        , Element.width <| Element.px 56
-        , Element.height <| Element.px 56
+        , Element.width <| Element.px 48
+        , Element.height <| Element.px 48
         , Element.Border.width 2
         , Element.Border.color <| Element.rgb 0.4 0.4 0.4
         ]
         { onPress = Just (PressedToggleUpvote questionId)
         , label =
             Element.row
-                [ Element.centerX, Element.centerY, Element.Font.size 18, Element.spacing 2 ]
+                [ Element.centerX, Element.centerY, Element.Font.size 16, Element.spacing 2 ]
                 [ Element.text (String.fromInt (Question.votes question))
-                , Element.el [ Element.Font.size 16 ] (Element.text "❤️")
+                , Element.el [ Element.Font.size 14 ] (Element.text "❤️")
                 ]
         }
 

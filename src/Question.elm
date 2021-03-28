@@ -1,5 +1,6 @@
 module Question exposing (..)
 
+import Id exposing (UserId(..))
 import Lamdera exposing (SessionId)
 import Set exposing (Set)
 import String.Nonempty exposing (NonemptyString)
@@ -13,6 +14,10 @@ type alias Question =
     , otherVotes : Int
     , isUpvoted : Bool
     }
+
+
+type QuestionId
+    = QuestionId UserId Int
 
 
 type alias BackendQuestion =
@@ -45,3 +50,13 @@ backendToFrontend sessionId backendQuestion =
 isNewQuestion : Time.Posix -> Question -> Bool
 isNewQuestion currentTime question =
     Time.posixToMillis question.creationTime + 1600 > Time.posixToMillis currentTime
+
+
+isCreator : UserId -> QuestionId -> Bool
+isCreator userId (QuestionId userId_ _) =
+    userId == userId_
+
+
+questionIdToString : QuestionId -> String
+questionIdToString (QuestionId (UserId userId) questionIndex) =
+    String.fromInt userId ++ " " ++ String.fromInt questionIndex

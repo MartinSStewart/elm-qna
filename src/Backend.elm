@@ -2,14 +2,13 @@ module Backend exposing (..)
 
 import AssocList as Dict
 import Duration
-import Env
+import Id exposing (CryptographicKey, QnaSessionId, UserId(..))
 import Lamdera exposing (ClientId, SessionId)
 import Network exposing (ChangeId)
 import Quantity
-import Question exposing (BackendQuestion)
+import Question exposing (BackendQuestion, QuestionId)
 import Set
 import Set.Extra as Set
-import Sha256
 import Task
 import Time
 import Types exposing (..)
@@ -231,6 +230,45 @@ updateQnaSession_ sessionId clientId currentTime changeId localQnaMsg qnaSession
             else
                 ( qnaSession, Cmd.none )
 
+        DeleteQuestion questionId ->
+            if Question.isCreator userId questionId then
+                ( { qnaSession
+                    | questions =
+                        Dict.update questionId
+                            (Maybe.andThen
+                                (\question ->
+                                    if question.isPinned == Nothing then
+                                        Nothing
+
+                                    else
+                                        Just question
+                                )
+                            )
+                            qnaSession.questions
+                  }
+                , Dict.keys qnaSession.connections
+                    |> List.map
+                        (\clientId_ ->
+                            if clientId == clientId_ then
+                                Lamdera.sendToFrontend
+                                    clientId_
+                                    (LocalConfirmQnaMsgResponse
+                                        qnaSessionId
+                                        changeId
+                                        DeleteQuestionResponse
+                                    )
+
+                            else
+                                Lamdera.sendToFrontend
+                                    clientId_
+                                    (ServerMsgResponse qnaSessionId (QuestionDeleted questionId))
+                        )
+                    |> Cmd.batch
+                )
+
+            else
+                ( qnaSession, Cmd.none )
+
 
 updateFromFrontendWithTime :
     SessionId
@@ -280,7 +318,7 @@ updateFromFrontendWithTime sessionId clientId msg model currentTime =
         CreateQnaSession qnaSessionName ->
             let
                 ( model2, qnaSessionId ) =
-                    getShortCryptographicKey model
+                    Id.getShortCryptographicKey model
             in
             ( { model2
                 | qnaSessions =
@@ -291,10 +329,3 @@ updateFromFrontendWithTime sessionId clientId msg model currentTime =
               }
             , Lamdera.sendToFrontend clientId (CreateQnaSessionResponse qnaSessionId)
             )
-
-
-getShortCryptographicKey : BackendModel -> ( BackendModel, CryptographicKey a )
-getShortCryptographicKey model =
-    ( { model | keyCounter = model.keyCounter + 1 }
-    , Env.secretKey ++ String.fromInt model.keyCounter |> Sha256.sha224 |> String.left 8 |> CryptographicKey
-    )
