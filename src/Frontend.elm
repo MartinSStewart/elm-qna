@@ -214,10 +214,17 @@ update msg model =
                                 Csv.Encode.withFieldNames
                                     (\question ->
                                         [ ( "votes", String.fromInt (Question.votes question) )
+                                        , ( "pinned"
+                                          , if question.isPinned == Nothing then
+                                                "0"
+
+                                            else
+                                                "1"
+                                          )
                                         , ( "question", NonemptyString.toString question.content )
                                         ]
                                     )
-                            , fieldSeparator = ','
+                            , fieldSeparator = ';'
                             }
                             (Dict.values (Network.localState qnaSessionUpdate inQnaSession.networkModel).questions
                                 |> List.sortBy (.creationTime >> Time.posixToMillis)
