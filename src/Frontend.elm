@@ -566,13 +566,15 @@ view model =
                         ]
 
                 LoadingQnaSession qnaSessionId ->
-                    Element.text "Loading..."
+                    Element.el [ Element.centerX, Element.centerY ] (Element.text "Loading...")
 
                 CreatingQnaSession _ ->
-                    Element.text "Creating..."
+                    Element.el [ Element.centerX, Element.centerY ] (Element.text "Creating...")
 
                 LoadingQnaSessionFailed () ->
-                    Element.paragraph [] [ Element.text "That Q&A session doesn't exist." ]
+                    Element.paragraph
+                        [ Element.centerX, Element.centerY ]
+                        [ Element.text "That Q&A session doesn't exist." ]
 
                 InQnaSession inQnaSession ->
                     let
@@ -596,7 +598,7 @@ view model =
                             , Element.width <| Element.maximum 800 Element.fill
                             , Element.centerX
                             , Element.paddingXY 16 16
-                            , Element.height <| Element.maximum 800 Element.fill
+                            , Element.height Element.fill
                             ]
                             [ Element.column
                                 [ Element.width Element.fill, Element.height Element.fill, Element.spacing 6 ]
