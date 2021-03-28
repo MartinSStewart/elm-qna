@@ -610,27 +610,38 @@ view model =
                                     qnaSession.questions
                                 ]
                             , if qnaSession.isHost then
-                                if Dict.isEmpty qnaSession.questions then
-                                    Element.none
+                                animatedParagraph
+                                    (Animation.fromTo
+                                        { duration = 2000, options = [] }
+                                        [ Property.opacity 0 ]
+                                        [ Property.opacity <|
+                                            if Dict.isEmpty qnaSession.questions then
+                                                0
 
-                                else
-                                    animatedParagraph
-                                        (Animation.fromTo
-                                            { duration = 2000, options = [] }
-                                            [ Property.opacity 0 ]
-                                            [ Property.opacity 1 ]
-                                        )
-                                        [ Element.Font.size 16 ]
-                                        [ Element.text "Questions will be deleted after 2 days of inactivity. If you want to save them, "
-                                        , Element.Input.button
-                                            [ Element.Font.color <| Element.rgb 0.2 0.2 1
-                                            , Element.Border.widthEach { left = 0, right = 0, top = 0, bottom = 1 }
-                                            , Element.Border.color <| Element.rgba 0 0 0 0
-                                            , Element.mouseOver [ Element.Border.color <| Element.rgb 0.2 0.2 1 ]
-                                            ]
-                                            { onPress = Just PressedDownloadQuestions, label = Element.text "click here" }
-                                        , Element.text " to download them as a spreadsheet."
+                                            else
+                                                1
                                         ]
+                                    )
+                                    [ Element.Font.size 16
+                                    , (if Dict.isEmpty qnaSession.questions then
+                                        "none"
+
+                                       else
+                                        "auto"
+                                      )
+                                        |> Html.Attributes.style "pointer-events"
+                                        |> Element.htmlAttribute
+                                    ]
+                                    [ Element.text "Questions will be deleted after 2 days of inactivity. If you want to save them, "
+                                    , Element.Input.button
+                                        [ Element.Font.color <| Element.rgb 0.2 0.2 1
+                                        , Element.Border.widthEach { left = 0, right = 0, top = 0, bottom = 1 }
+                                        , Element.Border.color <| Element.rgba 0 0 0 0
+                                        , Element.mouseOver [ Element.Border.color <| Element.rgb 0.2 0.2 1 ]
+                                        ]
+                                        { onPress = Just PressedDownloadQuestions, label = Element.text "click here" }
+                                    , Element.text " to download them as a spreadsheet."
+                                    ]
 
                               else
                                 questionInputView inQnaSession
