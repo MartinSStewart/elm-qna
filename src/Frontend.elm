@@ -573,8 +573,8 @@ view model =
 
                 LoadingQnaSessionFailed () ->
                     Element.paragraph
-                        [ Element.centerX, Element.centerY ]
-                        [ Element.text "That Q&A session doesn't exist." ]
+                        [ Element.Font.center, Element.centerY, Element.padding 8 ]
+                        [ Element.text "Sorry, this Q&A session doesn't exist." ]
 
                 InQnaSession inQnaSession ->
                     let
