@@ -721,6 +721,46 @@ questionsView currentTime isHost questions =
             , Element.Border.width 1
             , Element.Border.color <| Element.rgb 0.5 0.5 0.5
             ]
+
+        pinnedQuestions : List ( String, Element FrontendMsg )
+        pinnedQuestions =
+            Dict.toList questions
+                |> List.filterMap
+                    (\( questionId, question ) ->
+                        question.isPinned |> Maybe.map (\pinTime -> ( questionId, pinTime, question ))
+                    )
+                |> List.sortBy (\( _, pinTime, _ ) -> Time.posixToMillis pinTime)
+                |> List.map
+                    (\( questionId, _, question ) ->
+                        keyedQuestion False ( questionId, question )
+                    )
+
+        unpinnedQuestions : List ( String, Element FrontendMsg )
+        unpinnedQuestions =
+            Dict.toList questions
+                |> List.filter (Tuple.second >> .isPinned >> (==) Nothing)
+                |> List.sortWith
+                    (\( _, a ) ( _, b ) ->
+                        case compare (Question.votes a) (Question.votes b) of
+                            GT ->
+                                LT
+
+                            LT ->
+                                GT
+
+                            EQ ->
+                                compare (Time.posixToMillis a.creationTime) (Time.posixToMillis b.creationTime)
+                    )
+                |> List.indexedMap
+                    (\index value ->
+                        keyedQuestion (index == 0 && not (List.isEmpty pinnedQuestions)) value
+                    )
+
+        keyedQuestion : Bool -> ( QuestionId, Question ) -> ( String, Element FrontendMsg )
+        keyedQuestion isFirstUnpinnedQuestion ( (QuestionId (UserId userId) questionIndex) as questionId, question ) =
+            ( String.fromInt userId ++ " " ++ String.fromInt questionIndex
+            , questionView isFirstUnpinnedQuestion currentTime isHost questionId question
+            )
     in
     if Dict.isEmpty questions then
         Element.el containerStyle
@@ -734,36 +774,8 @@ questionsView currentTime isHost questions =
             )
 
     else
-        Dict.toList questions
-            |> List.sortWith
-                (\( _, a ) ( _, b ) ->
-                    case ( a.isPinned, b.isPinned ) of
-                        ( Just pinTimeA, Just pinTimeB ) ->
-                            compare (Time.posixToMillis pinTimeA) (Time.posixToMillis pinTimeB)
-
-                        ( Just _, Nothing ) ->
-                            LT
-
-                        ( Nothing, Just _ ) ->
-                            GT
-
-                        ( Nothing, Nothing ) ->
-                            case compare (Question.votes a) (Question.votes b) of
-                                GT ->
-                                    LT
-
-                                LT ->
-                                    GT
-
-                                EQ ->
-                                    compare (Time.posixToMillis a.creationTime) (Time.posixToMillis b.creationTime)
-                )
-            |> List.map
-                (\( (QuestionId (UserId userId) questionIndex) as questionId, question ) ->
-                    ( String.fromInt userId ++ " " ++ String.fromInt questionIndex
-                    , questionView currentTime isHost questionId question
-                    )
-                )
+        pinnedQuestions
+            ++ unpinnedQuestions
             |> Element.Keyed.column containerStyle
 
 
@@ -786,8 +798,8 @@ animatedRow =
     animatedUi Element.row
 
 
-questionView : Maybe Time.Posix -> Bool -> QuestionId -> Question -> Element FrontendMsg
-questionView currentTime isHost questionId question =
+questionView : Bool -> Maybe Time.Posix -> Bool -> QuestionId -> Question -> Element FrontendMsg
+questionView isFirstUnpinnedQuestion currentTime isHost questionId question =
     animatedRow
         (Animation.fromTo
             { duration = 1500, options = [] }
@@ -819,6 +831,40 @@ questionView currentTime isHost questionId question =
         [ Element.padding 8
         , Element.spacing 16
         , Element.width Element.fill
+        , Element.inFront
+            (if isFirstUnpinnedQuestion then
+                let
+                    lineColor =
+                        Element.rgb 0.5 0.5 0.5
+                in
+                Element.row
+                    [ Element.width Element.fill
+                    , Element.paddingXY 8 0
+                    , Element.alignTop
+                    , Element.Font.size 14
+                    , Element.spacing 8
+                    , Element.moveUp 7
+                    ]
+                    [ Element.el
+                        [ Element.width Element.fill
+                        , Element.height (Element.px 1)
+                        , Element.Background.color lineColor
+                        , Element.centerY
+                        ]
+                        Element.none
+                    , Element.text "Pinned 📌"
+                    , Element.el
+                        [ Element.width (Element.px 24)
+                        , Element.height (Element.px 1)
+                        , Element.Background.color lineColor
+                        , Element.centerY
+                        ]
+                        Element.none
+                    ]
+
+             else
+                Element.none
+            )
         ]
         [ upvoteButton questionId question
         , Element.paragraph
