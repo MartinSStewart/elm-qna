@@ -14,20 +14,20 @@ import Url exposing (Url)
 
 type alias FrontendModel =
     { key : Key
-    , remoteData : RemoteData
+    , remoteData : FrontendStatus
     , currentTime : Maybe Time.Posix
     }
 
 
-type RemoteData
-    = NotAsked
-    | Loading (CryptographicKey QnaSessionId)
-    | Creating NonemptyString
-    | Failure ()
-    | Success SuccessModel
+type FrontendStatus
+    = Homepage
+    | LoadingQnaSession (CryptographicKey QnaSessionId)
+    | CreatingQnaSession NonemptyString
+    | LoadingQnaSessionFailed ()
+    | InQnaSession InQnaSession_
 
 
-type alias SuccessModel =
+type alias InQnaSession_ =
     { qnaSessionId : CryptographicKey QnaSessionId
     , networkModel : NetworkModel LocalQnaMsg ConfirmLocalQnaMsg ServerQnaMsg QnaSession
     , question : String
@@ -37,8 +37,8 @@ type alias SuccessModel =
     }
 
 
-initSuccessModel : CryptographicKey QnaSessionId -> QnaSession -> SuccessModel
-initSuccessModel qnaSessionId qnaSesssion =
+initInQnaSession : CryptographicKey QnaSessionId -> QnaSession -> InQnaSession_
+initInQnaSession qnaSessionId qnaSesssion =
     { qnaSessionId = qnaSessionId
     , networkModel = Network.init qnaSesssion
     , question = ""

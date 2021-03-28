@@ -25,7 +25,23 @@ import Simple.Animation.Property as Property
 import String.Nonempty as NonemptyString exposing (NonemptyString(..))
 import Task exposing (Task)
 import Time
-import Types exposing (..)
+import Types
+    exposing
+        ( ConfirmLocalQnaMsg(..)
+        , CryptographicKey(..)
+        , FrontendModel
+        , FrontendMsg(..)
+        , FrontendStatus(..)
+        , InQnaSession_
+        , LocalQnaMsg(..)
+        , QnaSession
+        , QnaSessionId
+        , QuestionId(..)
+        , ServerQnaMsg(..)
+        , ToBackend(..)
+        , ToFrontend(..)
+        , UserId(..)
+        )
 import Url
 import Url.Parser
 
@@ -46,12 +62,12 @@ init : Url.Url -> Browser.Navigation.Key -> ( FrontendModel, Cmd FrontendMsg )
 init url key =
     case Url.Parser.parse urlDecoder url of
         Just (Just qnaSessionId) ->
-            ( { key = key, remoteData = Loading qnaSessionId, currentTime = Nothing }
+            ( { key = key, remoteData = LoadingQnaSession qnaSessionId, currentTime = Nothing }
             , Lamdera.sendToBackend (GetQnaSession qnaSessionId)
             )
 
         _ ->
-            ( { key = key, remoteData = NotAsked, currentTime = Nothing }
+            ( { key = key, remoteData = Homepage, currentTime = Nothing }
             , Cmd.none
             )
 
@@ -91,10 +107,14 @@ update msg model =
 
                 Just (Just qnaSessionId) ->
                     case model.remoteData of
-                        Creating qnaSessionName ->
+                        CreatingQnaSession qnaSessionName ->
                             ( { model
                                 | remoteData =
-                                    Success (initSuccessModel qnaSessionId (initQnaSession qnaSessionName True))
+                                    InQnaSession
+                                        (Types.initInQnaSession
+                                            qnaSessionId
+                                            (Types.initQnaSession qnaSessionName True)
+                                        )
                               }
                             , Cmd.none
                             )
@@ -113,38 +133,38 @@ update msg model =
                 name =
                     NonemptyString 'T' "est"
             in
-            ( { model | remoteData = Creating name }, Lamdera.sendToBackend (CreateQnaSession name) )
+            ( { model | remoteData = CreatingQnaSession name }, Lamdera.sendToBackend (CreateQnaSession name) )
 
         TypedQuestion text ->
             case model.remoteData of
-                Success success ->
-                    ( { model | remoteData = Success { success | question = text } }, Cmd.none )
+                InQnaSession inQnaSession ->
+                    ( { model | remoteData = InQnaSession { inQnaSession | question = text } }, Cmd.none )
 
                 _ ->
                     ( model, Cmd.none )
 
         PressedCreateQuestion ->
-            updateSuccessState
-                (\success ->
-                    case valiatedQuestion success.question of
+            updateInQnaSession
+                (\inQnaSession ->
+                    case valiatedQuestion inQnaSession.question of
                         Ok nonempty ->
                             let
                                 localMsg =
                                     CreateQuestion nonempty
                             in
-                            ( { success
+                            ( { inQnaSession
                                 | networkModel =
                                     Network.updateFromUser
-                                        success.localChangeCounter
+                                        inQnaSession.localChangeCounter
                                         localMsg
-                                        success.networkModel
+                                        inQnaSession.networkModel
                                 , question = ""
                                 , pressedCreateQuestion = False
-                                , localChangeCounter = Network.incrementChangeId success.localChangeCounter
+                                , localChangeCounter = Network.incrementChangeId inQnaSession.localChangeCounter
                               }
                             , Cmd.batch
                                 [ Lamdera.sendToBackend
-                                    (LocalMsgRequest success.qnaSessionId success.localChangeCounter localMsg)
+                                    (LocalMsgRequest inQnaSession.qnaSessionId inQnaSession.localChangeCounter localMsg)
                                 , Browser.Dom.getViewportOf questionsViewId
                                     |> Task.andThen
                                         (\{ scene, viewport } ->
@@ -156,22 +176,22 @@ update msg model =
                             )
 
                         Err _ ->
-                            ( { success | pressedCreateQuestion = True }
+                            ( { inQnaSession | pressedCreateQuestion = True }
                             , Cmd.none
                             )
                 )
                 model
 
         PressedToggleUpvote questionId ->
-            updateSuccessState (addLocalChange (ToggleUpvote questionId)) model
+            updateInQnaSession (addLocalChange (ToggleUpvote questionId)) model
 
         PressedCloseHostBanner ->
-            updateSuccessState
-                (\success -> ( { success | closedHostBanner = True }, Cmd.none ))
+            updateInQnaSession
+                (\inQnaSession -> ( { inQnaSession | closedHostBanner = True }, Cmd.none ))
                 model
 
         PressedTogglePin questionId ->
-            updateSuccessState
+            updateInQnaSession
                 (let
                     localMsg =
                         TogglePin
@@ -187,9 +207,9 @@ update msg model =
             ( { model | currentTime = Just currentTime }, Cmd.none )
 
         PressedDownloadQuestions ->
-            updateSuccessState
-                (\success ->
-                    ( success
+            updateInQnaSession
+                (\inQnaSession ->
+                    ( inQnaSession
                     , File.Download.string
                         "questions.csv"
                         "text/csv"
@@ -203,7 +223,7 @@ update msg model =
                                     )
                             , fieldSeparator = ','
                             }
-                            (Dict.values (Network.localState qnaSessionUpdate success.networkModel).questions
+                            (Dict.values (Network.localState qnaSessionUpdate inQnaSession.networkModel).questions
                                 |> List.sortBy (.creationTime >> Time.posixToMillis)
                             )
                         )
@@ -212,17 +232,17 @@ update msg model =
                 model
 
 
-addLocalChange : LocalQnaMsg -> SuccessModel -> ( SuccessModel, Cmd FrontendMsg )
-addLocalChange localMsg success =
-    ( { success
+addLocalChange : LocalQnaMsg -> InQnaSession_ -> ( InQnaSession_, Cmd FrontendMsg )
+addLocalChange localMsg inQnaSession =
+    ( { inQnaSession
         | networkModel =
             Network.updateFromUser
-                success.localChangeCounter
+                inQnaSession.localChangeCounter
                 localMsg
-                success.networkModel
-        , localChangeCounter = Network.incrementChangeId success.localChangeCounter
+                inQnaSession.networkModel
+        , localChangeCounter = Network.incrementChangeId inQnaSession.localChangeCounter
       }
-    , Lamdera.sendToBackend (LocalMsgRequest success.qnaSessionId success.localChangeCounter localMsg)
+    , Lamdera.sendToBackend (LocalMsgRequest inQnaSession.qnaSessionId inQnaSession.localChangeCounter localMsg)
     )
 
 
@@ -275,12 +295,12 @@ position millis start end elapsed =
         end
 
 
-updateSuccessState : (SuccessModel -> ( SuccessModel, Cmd FrontendMsg )) -> FrontendModel -> ( FrontendModel, Cmd FrontendMsg )
-updateSuccessState updateFunc model =
+updateInQnaSession : (InQnaSession_ -> ( InQnaSession_, Cmd FrontendMsg )) -> FrontendModel -> ( FrontendModel, Cmd FrontendMsg )
+updateInQnaSession updateFunc model =
     case model.remoteData of
-        Success success ->
-            updateFunc success
-                |> Tuple.mapFirst (\a -> { model | remoteData = Success a })
+        InQnaSession inQnaSession ->
+            updateFunc inQnaSession
+                |> Tuple.mapFirst (\a -> { model | remoteData = InQnaSession a })
 
         _ ->
             ( model, Cmd.none )
@@ -428,36 +448,36 @@ updateFromBackend : ToFrontend -> FrontendModel -> ( FrontendModel, Cmd Frontend
 updateFromBackend msg model =
     case msg of
         ServerMsgResponse qnaSessionId serverQnaMsg ->
-            updateSuccessState
-                (\success ->
-                    ( if success.qnaSessionId == qnaSessionId then
-                        { success
+            updateInQnaSession
+                (\inQnaSession ->
+                    ( if inQnaSession.qnaSessionId == qnaSessionId then
+                        { inQnaSession
                             | networkModel =
-                                Network.serverChange qnaSessionUpdate serverQnaMsg success.networkModel
+                                Network.serverChange qnaSessionUpdate serverQnaMsg inQnaSession.networkModel
                         }
 
                       else
-                        success
+                        inQnaSession
                     , Cmd.none
                     )
                 )
                 model
 
         LocalConfirmQnaMsgResponse qnaSessionId changeId confirmLocalMsg ->
-            updateSuccessState
-                (\success ->
-                    ( if success.qnaSessionId == qnaSessionId then
-                        { success
+            updateInQnaSession
+                (\inQnaSession ->
+                    ( if inQnaSession.qnaSessionId == qnaSessionId then
+                        { inQnaSession
                             | networkModel =
                                 Network.confirmLocalChange
                                     qnaSessionUpdate
                                     changeId
                                     confirmLocalMsg
-                                    success.networkModel
+                                    inQnaSession.networkModel
                         }
 
                       else
-                        success
+                        inQnaSession
                     , Cmd.none
                     )
                 )
@@ -465,16 +485,16 @@ updateFromBackend msg model =
 
         GetQnaSessionResponse qnaSessionId result ->
             ( case model.remoteData of
-                Loading qnaSessionId_ ->
+                LoadingQnaSession qnaSessionId_ ->
                     if qnaSessionId == qnaSessionId_ then
                         { model
                             | remoteData =
                                 case result of
                                     Ok qnaSession ->
-                                        Success (initSuccessModel qnaSessionId qnaSession)
+                                        InQnaSession (Types.initInQnaSession qnaSessionId qnaSession)
 
                                     Err () ->
-                                        Failure ()
+                                        LoadingQnaSessionFailed ()
                         }
 
                     else
@@ -498,7 +518,7 @@ view model =
         [ Element.layout
             []
             (case model.remoteData of
-                NotAsked ->
+                Homepage ->
                     Element.column
                         [ Element.centerX, Element.centerY, Element.spacing 16, Element.paddingXY 16 0 ]
                         [ Element.paragraph
@@ -512,24 +532,24 @@ view model =
                             }
                         ]
 
-                Loading qnaSessionId ->
+                LoadingQnaSession qnaSessionId ->
                     Element.text "Loading..."
 
-                Creating _ ->
+                CreatingQnaSession _ ->
                     Element.text "Creating..."
 
-                Failure () ->
+                LoadingQnaSessionFailed () ->
                     Element.paragraph [] [ Element.text "That Q&A session doesn't exist." ]
 
-                Success success ->
+                InQnaSession inQnaSession ->
                     let
                         qnaSession : QnaSession
                         qnaSession =
-                            Network.localState qnaSessionUpdate success.networkModel
+                            Network.localState qnaSessionUpdate inQnaSession.networkModel
                     in
                     Element.el
                         [ Element.inFront
-                            (if success.closedHostBanner || not qnaSession.isHost then
+                            (if inQnaSession.closedHostBanner || not qnaSession.isHost then
                                 Element.none
 
                              else
@@ -577,7 +597,7 @@ view model =
                                         ]
 
                               else
-                                questionInputView success
+                                questionInputView inQnaSession
                             ]
                         )
             )
@@ -615,8 +635,8 @@ maxQuestionChars =
     200
 
 
-questionInputView : SuccessModel -> Element FrontendMsg
-questionInputView success =
+questionInputView : InQnaSession_ -> Element FrontendMsg
+questionInputView inQnaSession =
     Element.column
         [ Element.width Element.fill, Element.spacing 16 ]
         [ Element.el
@@ -625,7 +645,7 @@ questionInputView success =
                     [ Element.alignBottom
                     , Element.alignRight
                     , Element.Font.color <|
-                        if String.length success.question > maxQuestionChars then
+                        if String.length inQnaSession.question > maxQuestionChars then
                             errorColor
 
                         else
@@ -635,7 +655,7 @@ questionInputView success =
                     , Element.moveUp 4
                     ]
                     (Element.text
-                        (String.fromInt (String.length success.question)
+                        (String.fromInt (String.length inQnaSession.question)
                             ++ "/"
                             ++ String.fromInt maxQuestionChars
                         )
@@ -668,7 +688,7 @@ questionInputView success =
                     Element.Input.labelAbove
                         []
                         (Element.text "What do you want to ask?")
-                , text = success.question
+                , text = inQnaSession.question
                 }
             )
         , Element.row [ Element.spacing 16 ]
@@ -678,7 +698,7 @@ questionInputView success =
                 , label =
                     Element.text "Submit question"
                 }
-            , case ( valiatedQuestion success.question, success.pressedCreateQuestion ) of
+            , case ( valiatedQuestion inQnaSession.question, inQnaSession.pressedCreateQuestion ) of
                 ( Err error, True ) ->
                     Element.paragraph
                         [ Element.Font.color errorColor ]
