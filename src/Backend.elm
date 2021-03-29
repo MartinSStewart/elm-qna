@@ -1,4 +1,4 @@
-module Backend exposing (..)
+module Backend exposing (init, update, updateFromFrontendWithTime)
 
 import AssocList as Dict
 import Duration
@@ -9,6 +9,7 @@ import Quantity
 import Question exposing (BackendQuestion, QuestionId)
 import Set
 import Set.Extra as Set
+import String.Nonempty exposing (NonemptyString)
 import Task
 import Time
 import Types exposing (..)
@@ -63,9 +64,8 @@ update msg model =
                 | qnaSessions =
                     Dict.filter
                         (\_ qnaSession ->
-                            Duration.addTo (lastActivity qnaSession) (Duration.days 2)
-                                |> Duration.from currentTime
-                                |> Quantity.lessThan Quantity.zero
+                            Duration.from (lastActivity qnaSession) currentTime
+                                |> Quantity.lessThan (Duration.days 2)
                         )
                         model.qnaSessions
               }
