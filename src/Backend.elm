@@ -150,7 +150,7 @@ updateQnaSession_ sessionId clientId currentTime changeId localQnaMsg qnaSession
                 Nothing ->
                     ( qnaSession, Cmd.none )
 
-        CreateQuestion content ->
+        CreateQuestion _ content ->
             let
                 questionId : QuestionId
                 questionId =

@@ -147,7 +147,7 @@ update msg model =
                         Ok nonempty ->
                             let
                                 localMsg =
-                                    CreateQuestion nonempty
+                                    CreateQuestion (Maybe.withDefault (Time.millisToPosix 0) model.currentTime) nonempty
                             in
                             ( { inQnaSession
                                 | networkModel =
@@ -354,8 +354,8 @@ pinQuestion questionId currentTime qnaSession =
     }
 
 
-createQuestion : Maybe Time.Posix -> NonemptyString -> QnaSession -> QnaSession
-createQuestion maybeTime content qnaSession =
+createQuestion : Time.Posix -> NonemptyString -> QnaSession -> QnaSession
+createQuestion creationTime content qnaSession =
     let
         questionId : QuestionId
         questionId =
@@ -365,7 +365,7 @@ createQuestion maybeTime content qnaSession =
         | questions =
             Dict.insert
                 questionId
-                { creationTime = Maybe.withDefault (Time.millisToPosix 0) maybeTime
+                { creationTime = creationTime
                 , content = content
                 , isPinned = Nothing
                 , otherVotes = 0
@@ -386,8 +386,8 @@ qnaSessionUpdate msg qnaSession =
         LocalChange _ (ToggleUpvote questionId) ->
             toggleUpvote questionId qnaSession
 
-        LocalChange _ (CreateQuestion content) ->
-            createQuestion Nothing content qnaSession
+        LocalChange _ (CreateQuestion creationTime content) ->
+            createQuestion creationTime content qnaSession
 
         LocalChange _ (TogglePin questionId pinTime) ->
             pinQuestion questionId pinTime qnaSession
@@ -405,8 +405,8 @@ qnaSessionUpdate msg qnaSession =
 
         ConfirmLocalChange _ localChange (CreateQuestionResponse creationTime) ->
             case localChange of
-                CreateQuestion content ->
-                    createQuestion (Just creationTime) content qnaSession
+                CreateQuestion _ content ->
+                    createQuestion creationTime content qnaSession
 
                 _ ->
                     qnaSession
@@ -431,7 +431,7 @@ qnaSessionUpdate msg qnaSession =
             { qnaSession
                 | questions =
                     Dict.insert questionId
-                        { creationTime = creationTime
+                        { creationTime = creationTime |> Debug.log "creation time"
                         , content = content
                         , isPinned = Nothing
                         , otherVotes = 0

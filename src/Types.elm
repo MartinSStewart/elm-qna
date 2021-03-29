@@ -66,7 +66,7 @@ getQuestionId questions userId =
 
 type LocalQnaMsg
     = ToggleUpvote QuestionId
-    | CreateQuestion NonemptyString
+    | CreateQuestion Time.Posix NonemptyString
     | TogglePin QuestionId Time.Posix
     | DeleteQuestion QuestionId
 
