@@ -431,7 +431,7 @@ qnaSessionUpdate msg qnaSession =
             { qnaSession
                 | questions =
                     Dict.insert questionId
-                        { creationTime = creationTime |> Debug.log "creation time"
+                        { creationTime = creationTime
                         , content = content
                         , isPinned = Nothing
                         , otherVotes = 0
