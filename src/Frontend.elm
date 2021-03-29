@@ -1,4 +1,4 @@
-module Frontend exposing (..)
+module Frontend exposing (app, init, update, updateFromBackend, view)
 
 import AssocList as Dict exposing (Dict)
 import Browser exposing (UrlRequest(..))
@@ -19,6 +19,7 @@ import Id exposing (CryptographicKey(..), QnaSessionId, UserId(..))
 import Json.Decode
 import Lamdera
 import Network exposing (Change(..))
+import QnaSession exposing (QnaSession)
 import Question exposing (Question, QuestionId)
 import Simple.Animation as Animation exposing (Animation)
 import Simple.Animation.Animated as Animated
@@ -34,7 +35,6 @@ import Types
         , FrontendStatus(..)
         , InQnaSession_
         , LocalQnaMsg(..)
-        , QnaSession
         , ServerQnaMsg(..)
         , ToBackend(..)
         , ToFrontend(..)
@@ -110,7 +110,7 @@ update msg model =
                                     InQnaSession
                                         (Types.initInQnaSession
                                             qnaSessionId
-                                            (Types.initQnaSession qnaSessionName True)
+                                            (QnaSession.init qnaSessionName True)
                                         )
                               }
                             , Cmd.none
@@ -565,7 +565,7 @@ view model =
                             }
                         ]
 
-                LoadingQnaSession qnaSessionId ->
+                LoadingQnaSession _ ->
                     Element.el [ Element.centerX, Element.centerY ] (Element.text "Loading...")
 
                 CreatingQnaSession _ ->
@@ -671,10 +671,6 @@ hostBannerView =
             , label = Element.text "OK"
             }
         ]
-
-
-domain =
-    "https://question-and-answer.lamdera.app/"
 
 
 maxQuestionChars : number

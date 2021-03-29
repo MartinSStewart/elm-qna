@@ -5,6 +5,7 @@ import Backend
 import Duration
 import Expect exposing (Expectation)
 import Fuzz exposing (Fuzzer, int, list, string)
+import QnaSession
 import String.Nonempty exposing (NonemptyString(..))
 import Test exposing (..)
 import Time
@@ -56,11 +57,11 @@ suite =
                     |> Expect.equal 0
         , test "Last Q&A activity" <|
             \_ ->
-                Types.initBackendQnaSession
+                QnaSession.initBackend
                     "sessionId"
                     "clientId"
                     startTime
                     (NonemptyString 'T' "est")
-                    |> Types.lastActivity
+                    |> QnaSession.lastActivity
                     |> Expect.equal startTime
         ]

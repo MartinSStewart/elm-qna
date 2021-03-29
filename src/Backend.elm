@@ -5,11 +5,11 @@ import Duration
 import Id exposing (CryptographicKey, QnaSessionId, UserId(..))
 import Lamdera exposing (ClientId, SessionId)
 import Network exposing (ChangeId)
+import QnaSession exposing (BackendQnaSession)
 import Quantity
 import Question exposing (BackendQuestion, QuestionId)
 import Set
 import Set.Extra as Set
-import String.Nonempty exposing (NonemptyString)
 import Task
 import Time
 import Types exposing (..)
@@ -64,7 +64,7 @@ update msg model =
                 | qnaSessions =
                     Dict.filter
                         (\_ qnaSession ->
-                            Duration.from (lastActivity qnaSession) currentTime
+                            Duration.from (QnaSession.lastActivity qnaSession) currentTime
                                 |> Quantity.lessThan (Duration.days 2)
                         )
                         model.qnaSessions
@@ -306,7 +306,7 @@ updateFromFrontendWithTime sessionId clientId msg model currentTime =
                     , Lamdera.sendToFrontend clientId
                         (GetQnaSessionResponse
                             qnaSessionId
-                            (Ok (Types.backendToFrontendQnaSession sessionId userId qnaSession))
+                            (Ok (QnaSession.backendToFrontend sessionId userId qnaSession))
                         )
                     )
 
@@ -324,7 +324,7 @@ updateFromFrontendWithTime sessionId clientId msg model currentTime =
                 | qnaSessions =
                     Dict.insert
                         qnaSessionId
-                        (Types.initBackendQnaSession sessionId clientId currentTime qnaSessionName)
+                        (QnaSession.initBackend sessionId clientId currentTime qnaSessionName)
                         model2.qnaSessions
               }
             , Lamdera.sendToFrontend clientId (CreateQnaSessionResponse qnaSessionId)

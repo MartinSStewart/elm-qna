@@ -6,6 +6,7 @@ import Browser.Navigation exposing (Key)
 import Id exposing (CryptographicKey, QnaSessionId, UserId(..))
 import Lamdera exposing (ClientId, SessionId)
 import Network exposing (ChangeId, NetworkModel)
+import QnaSession exposing (BackendQnaSession, QnaSession)
 import Question exposing (BackendQuestion, Question, QuestionId(..))
 import String.Nonempty exposing (NonemptyString)
 import Time
@@ -54,43 +55,6 @@ type alias BackendModel =
     }
 
 
-type alias QnaSession =
-    { questions : Dict QuestionId Question
-    , name : NonemptyString
-    , userId : UserId
-    , isHost : Bool
-    }
-
-
-lastActivity : BackendQnaSession -> Time.Posix
-lastActivity qnaSession =
-    List.maximum
-        (Time.posixToMillis qnaSession.creationTime
-            :: List.map (.creationTime >> Time.posixToMillis) (Dict.values qnaSession.questions)
-        )
-        |> Maybe.map Time.millisToPosix
-        |> Maybe.withDefault qnaSession.creationTime
-
-
-initQnaSession : NonemptyString -> Bool -> QnaSession
-initQnaSession name isHost =
-    { questions = Dict.empty
-    , name = name
-    , userId = UserId 0
-    , isHost = isHost
-    }
-
-
-type alias BackendQnaSession =
-    { questions : Dict QuestionId BackendQuestion
-    , host : SessionId
-    , creationTime : Time.Posix
-    , name : NonemptyString
-    , connections : Dict ClientId UserId
-    , connectionCounter : Int
-    }
-
-
 getQuestionId : Dict QuestionId v -> UserId -> QuestionId
 getQuestionId questions userId =
     Dict.filter
@@ -98,26 +62,6 @@ getQuestionId questions userId =
         questions
         |> Dict.size
         |> QuestionId userId
-
-
-backendToFrontendQnaSession : SessionId -> UserId -> BackendQnaSession -> QnaSession
-backendToFrontendQnaSession sessionId userId qnaSession =
-    { questions = Dict.map (\_ question -> Question.backendToFrontend sessionId question) qnaSession.questions
-    , name = qnaSession.name
-    , userId = userId
-    , isHost = qnaSession.host == sessionId
-    }
-
-
-initBackendQnaSession : SessionId -> ClientId -> Time.Posix -> NonemptyString -> BackendQnaSession
-initBackendQnaSession hostSessionId hostClientId creationTime name =
-    { questions = Dict.empty
-    , host = hostSessionId
-    , creationTime = creationTime
-    , name = name
-    , connections = Dict.singleton hostClientId (UserId 0)
-    , connectionCounter = 1
-    }
 
 
 type LocalQnaMsg
