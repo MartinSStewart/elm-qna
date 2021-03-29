@@ -17,7 +17,7 @@ startTime =
 
 suite : Test
 suite =
-    describe "Tests"
+    describe "Q&A app tests"
         [ test "Q&A session is not removed after 1 day" <|
             \_ ->
                 Backend.init
