@@ -632,7 +632,7 @@ view model =
                                         |> Html.Attributes.style "pointer-events"
                                         |> Element.htmlAttribute
                                     ]
-                                    [ Element.text "Questions will be deleted after 2 days of inactivity. If you want to save them, "
+                                    [ Element.text "Questions will be deleted after 14 days of inactivity. If you want to save them, "
                                     , Element.Input.button
                                         [ Element.Font.color <| Element.rgb 0.2 0.2 1
                                         , Element.Border.widthEach { left = 0, right = 0, top = 0, bottom = 1 }

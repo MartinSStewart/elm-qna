@@ -65,7 +65,7 @@ update msg model =
                     Dict.filter
                         (\_ qnaSession ->
                             Duration.from (QnaSession.lastActivity qnaSession) currentTime
-                                |> Quantity.lessThan (Duration.days 2)
+                                |> Quantity.lessThan (Duration.days 14)
                         )
                         model.qnaSessions
               }

@@ -37,7 +37,7 @@ suite =
                     |> .qnaSessions
                     |> Dict.size
                     |> Expect.equal 1
-        , test "Q&A session is removed after 2 days" <|
+        , test "Q&A session is removed after 14 days" <|
             \_ ->
                 Backend.init
                     |> Tuple.first
@@ -50,7 +50,7 @@ suite =
                                 (Time.millisToPosix 0)
                        )
                     |> Tuple.first
-                    |> Backend.update (CheckSessions (Duration.addTo startTime (Duration.days 2.01)))
+                    |> Backend.update (CheckSessions (Duration.addTo startTime (Duration.days 14.01)))
                     |> Tuple.first
                     |> .qnaSessions
                     |> Dict.size
