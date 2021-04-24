@@ -303,7 +303,7 @@ hostSecretToUrl hostSecret =
 
 domain : String
 domain =
-    "question-and-answer.lamdera.app"
+    "question-and-answer.app"
 
 
 hostInvite : String
