@@ -4,6 +4,7 @@ import AssocList as Dict
 import Duration
 import Id exposing (CryptographicKey, QnaSessionId, UserId(..))
 import Lamdera exposing (ClientId, SessionId)
+import List.Extra as List
 import Network exposing (ChangeId)
 import QnaSession exposing (BackendQnaSession)
 import Quantity
@@ -184,7 +185,7 @@ updateQnaSession_ sessionId clientId currentTime changeId localQnaMsg qnaSession
             )
 
         TogglePin questionId _ ->
-            if qnaSession.host == sessionId then
+            if Set.member sessionId qnaSession.host then
                 case Dict.get questionId qnaSession.questions of
                     Just question ->
                         let
@@ -286,6 +287,36 @@ updateFromFrontendWithTime sessionId clientId msg model currentTime =
                 (updateQnaSession_ sessionId clientId currentTime changeId localQnaMsg qnaSessionId)
                 model
 
+        GetQnaSessionWithHostInvite hostSecret ->
+            case Dict.toList model.qnaSessions |> List.find (Tuple.second >> .hostSecret >> (==) hostSecret) of
+                Just ( qnaSessionId, qnaSession ) ->
+                    let
+                        userId =
+                            UserId qnaSession.connectionCounter
+                    in
+                    ( { model
+                        | qnaSessions =
+                            Dict.insert
+                                qnaSessionId
+                                { qnaSession
+                                    | connections = Dict.insert clientId userId qnaSession.connections
+                                    , connectionCounter = qnaSession.connectionCounter + 1
+                                    , host = Set.insert sessionId qnaSession.host
+                                }
+                                model.qnaSessions
+                      }
+                    , Lamdera.sendToFrontend clientId
+                        (GetQnaSessionWithHostInviteResponse
+                            hostSecret
+                            (Ok ( qnaSessionId, QnaSession.backendToFrontend sessionId userId qnaSession ))
+                        )
+                    )
+
+                Nothing ->
+                    ( model
+                    , Lamdera.sendToFrontend clientId (GetQnaSessionWithHostInviteResponse hostSecret (Err ()))
+                    )
+
         GetQnaSession qnaSessionId ->
             case Dict.get qnaSessionId model.qnaSessions of
                 Just qnaSession ->
@@ -306,7 +337,16 @@ updateFromFrontendWithTime sessionId clientId msg model currentTime =
                     , Lamdera.sendToFrontend clientId
                         (GetQnaSessionResponse
                             qnaSessionId
-                            (Ok (QnaSession.backendToFrontend sessionId userId qnaSession))
+                            (Ok
+                                { isHost =
+                                    if Set.member sessionId qnaSession.host then
+                                        Just qnaSession.hostSecret
+
+                                    else
+                                        Nothing
+                                , qnaSession = QnaSession.backendToFrontend sessionId userId qnaSession
+                                }
+                            )
                         )
                     )
 
@@ -319,13 +359,16 @@ updateFromFrontendWithTime sessionId clientId msg model currentTime =
             let
                 ( model2, qnaSessionId ) =
                     Id.getShortCryptographicKey model
+
+                ( model3, hostSecret ) =
+                    Id.getShortCryptographicKey model2
             in
-            ( { model2
+            ( { model3
                 | qnaSessions =
                     Dict.insert
                         qnaSessionId
-                        (QnaSession.initBackend sessionId clientId currentTime qnaSessionName)
+                        (QnaSession.initBackend sessionId clientId hostSecret currentTime qnaSessionName)
                         model2.qnaSessions
               }
-            , Lamdera.sendToFrontend clientId (CreateQnaSessionResponse qnaSessionId)
+            , Lamdera.sendToFrontend clientId (CreateQnaSessionResponse qnaSessionId hostSecret)
             )

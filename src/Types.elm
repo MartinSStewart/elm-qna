@@ -3,10 +3,10 @@ module Types exposing (..)
 import AssocList as Dict exposing (Dict)
 import Browser exposing (UrlRequest)
 import Browser.Navigation exposing (Key)
-import Id exposing (CryptographicKey, QnaSessionId, UserId(..))
+import Id exposing (CryptographicKey, HostSecret, QnaSessionId, UserId(..))
 import Lamdera exposing (ClientId, SessionId)
 import Network exposing (ChangeId, NetworkModel)
-import QnaSession exposing (BackendQnaSession, QnaSession)
+import QnaSession exposing (BackendQnaSession, HostStatus, QnaSession)
 import Question exposing (BackendQuestion, Question, QuestionId(..))
 import String.Nonempty exposing (NonemptyString)
 import Time
@@ -23,6 +23,7 @@ type alias FrontendModel =
 type FrontendStatus
     = Homepage
     | LoadingQnaSession (CryptographicKey QnaSessionId)
+    | LoadingQnaSessionWithHostInvite (CryptographicKey HostSecret)
     | CreatingQnaSession NonemptyString
     | LoadingQnaSessionFailed ()
     | InQnaSession InQnaSession_
@@ -34,18 +35,22 @@ type alias InQnaSession_ =
     , question : String
     , pressedCreateQuestion : Bool
     , localChangeCounter : ChangeId
-    , closedHostBanner : Bool
+    , copiedHostUrl : Maybe Time.Posix
+    , copiedUrl : Maybe Time.Posix
+    , isHost : Maybe (CryptographicKey HostSecret)
     }
 
 
-initInQnaSession : CryptographicKey QnaSessionId -> QnaSession -> InQnaSession_
-initInQnaSession qnaSessionId qnaSesssion =
+initInQnaSession : CryptographicKey QnaSessionId -> QnaSession -> Maybe (CryptographicKey HostSecret) -> InQnaSession_
+initInQnaSession qnaSessionId qnaSesssion hostStatus =
     { qnaSessionId = qnaSessionId
     , networkModel = Network.init qnaSesssion
     , question = ""
     , pressedCreateQuestion = False
     , localChangeCounter = Network.initChangeId
-    , closedHostBanner = False
+    , copiedHostUrl = Nothing
+    , copiedUrl = Nothing
+    , isHost = hostStatus
     }
 
 
@@ -94,16 +99,18 @@ type FrontendMsg
     | TypedQuestion String
     | PressedCreateQuestion
     | PressedToggleUpvote QuestionId
-    | PressedCloseHostBanner
     | PressedTogglePin QuestionId
     | GotCurrentTime Time.Posix
     | PressedDownloadQuestions
     | PressedDeleteQuestion QuestionId
+    | PressedCopyHostUrl
+    | PressedCopyUrl
 
 
 type ToBackend
     = LocalMsgRequest (CryptographicKey QnaSessionId) ChangeId LocalQnaMsg
     | GetQnaSession (CryptographicKey QnaSessionId)
+    | GetQnaSessionWithHostInvite (CryptographicKey HostSecret)
     | CreateQnaSession NonemptyString
 
 
@@ -117,5 +124,13 @@ type BackendMsg
 type ToFrontend
     = ServerMsgResponse (CryptographicKey QnaSessionId) ServerQnaMsg
     | LocalConfirmQnaMsgResponse (CryptographicKey QnaSessionId) ChangeId ConfirmLocalQnaMsg
-    | GetQnaSessionResponse (CryptographicKey QnaSessionId) (Result () QnaSession)
-    | CreateQnaSessionResponse (CryptographicKey QnaSessionId)
+    | GetQnaSessionResponse
+        (CryptographicKey QnaSessionId)
+        (Result
+            ()
+            { isHost : Maybe (CryptographicKey HostSecret)
+            , qnaSession : QnaSession
+            }
+        )
+    | GetQnaSessionWithHostInviteResponse (CryptographicKey HostSecret) (Result () ( CryptographicKey QnaSessionId, QnaSession ))
+    | CreateQnaSessionResponse (CryptographicKey QnaSessionId) (CryptographicKey HostSecret)

@@ -1,9 +1,10 @@
 module QnaSession exposing (..)
 
 import AssocList as Dict exposing (Dict)
-import Id exposing (UserId(..))
+import Id exposing (CryptographicKey, HostSecret, UserId(..))
 import Lamdera exposing (ClientId, SessionId)
 import Question exposing (BackendQuestion, Question, QuestionId)
+import Set exposing (Set)
 import String.Nonempty exposing (NonemptyString)
 import Time
 
@@ -12,13 +13,19 @@ type alias QnaSession =
     { questions : Dict QuestionId Question
     , name : NonemptyString
     , userId : UserId
-    , isHost : Bool
     }
+
+
+type HostStatus
+    = IsHostButLoading
+    | IsHost (CryptographicKey HostSecret)
+    | IsNotHost
 
 
 type alias BackendQnaSession =
     { questions : Dict QuestionId BackendQuestion
-    , host : SessionId
+    , host : Set SessionId
+    , hostSecret : CryptographicKey HostSecret
     , creationTime : Time.Posix
     , name : NonemptyString
     , connections : Dict ClientId UserId
@@ -26,19 +33,19 @@ type alias BackendQnaSession =
     }
 
 
-init : NonemptyString -> Bool -> QnaSession
-init name isHost =
+init : NonemptyString -> QnaSession
+init name =
     { questions = Dict.empty
     , name = name
     , userId = UserId 0
-    , isHost = isHost
     }
 
 
-initBackend : SessionId -> ClientId -> Time.Posix -> NonemptyString -> BackendQnaSession
-initBackend hostSessionId hostClientId creationTime name =
+initBackend : SessionId -> ClientId -> CryptographicKey HostSecret -> Time.Posix -> NonemptyString -> BackendQnaSession
+initBackend hostSessionId hostClientId hostSecret creationTime name =
     { questions = Dict.empty
-    , host = hostSessionId
+    , host = Set.singleton hostSessionId
+    , hostSecret = hostSecret
     , creationTime = creationTime
     , name = name
     , connections = Dict.singleton hostClientId (UserId 0)
@@ -61,5 +68,4 @@ backendToFrontend sessionId userId qnaSession =
     { questions = Dict.map (\_ question -> Question.backendToFrontend sessionId question) qnaSession.questions
     , name = qnaSession.name
     , userId = userId
-    , isHost = qnaSession.host == sessionId
     }

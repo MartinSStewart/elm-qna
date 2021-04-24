@@ -1,4 +1,4 @@
-module Frontend exposing (app, init, update, updateFromBackend, view)
+port module Frontend exposing (app, init, update, updateFromBackend, view)
 
 import AssocList as Dict exposing (Dict)
 import Browser exposing (UrlRequest(..))
@@ -15,7 +15,7 @@ import File.Download
 import Html exposing (Html)
 import Html.Attributes
 import Html.Events
-import Id exposing (CryptographicKey(..), QnaSessionId, UserId(..))
+import Id exposing (CryptographicKey(..), HostSecret, QnaSessionId, UserId(..))
 import Json.Decode
 import Lamdera
 import Network exposing (Change(..))
@@ -39,8 +39,11 @@ import Types
         , ToBackend(..)
         , ToFrontend(..)
         )
-import Url
-import Url.Parser
+import Url exposing (Url)
+import Url.Parser exposing ((</>))
+
+
+port supermario_copy_to_clipboard_to_js : String -> Cmd msg
 
 
 app =
@@ -58,22 +61,39 @@ app =
 init : Url.Url -> Browser.Navigation.Key -> ( FrontendModel, Cmd FrontendMsg )
 init url key =
     case Url.Parser.parse urlDecoder url of
-        Just (Just qnaSessionId) ->
+        Just (QnaSessionRoute qnaSessionId) ->
             ( { key = key, remoteData = LoadingQnaSession qnaSessionId, currentTime = Nothing }
             , Lamdera.sendToBackend (GetQnaSession qnaSessionId)
             )
 
-        _ ->
+        Just (HostInviteRoute hostSecret) ->
+            ( { key = key, remoteData = LoadingQnaSessionWithHostInvite hostSecret, currentTime = Nothing }
+            , Lamdera.sendToBackend (GetQnaSessionWithHostInvite hostSecret)
+            )
+
+        Just HomepageRoute ->
+            ( { key = key, remoteData = Homepage, currentTime = Nothing }
+            , Cmd.none
+            )
+
+        Nothing ->
             ( { key = key, remoteData = Homepage, currentTime = Nothing }
             , Cmd.none
             )
 
 
-urlDecoder : Url.Parser.Parser (Maybe (CryptographicKey QnaSessionId) -> c) c
+type Route
+    = HomepageRoute
+    | HostInviteRoute (CryptographicKey HostSecret)
+    | QnaSessionRoute (CryptographicKey QnaSessionId)
+
+
+urlDecoder : Url.Parser.Parser (Route -> c) c
 urlDecoder =
     Url.Parser.oneOf
-        [ Url.Parser.top |> Url.Parser.map Nothing
-        , Url.Parser.string |> Url.Parser.map (CryptographicKey >> Just)
+        [ Url.Parser.top |> Url.Parser.map HomepageRoute
+        , Url.Parser.s hostInvite </> Url.Parser.string |> Url.Parser.map (CryptographicKey >> HostInviteRoute)
+        , Url.Parser.string |> Url.Parser.map (CryptographicKey >> QnaSessionRoute)
         ]
 
 
@@ -99,22 +119,17 @@ update msg model =
 
         UrlChanged url ->
             case Url.Parser.parse urlDecoder url of
-                Just Nothing ->
+                Just HomepageRoute ->
                     ( model, Browser.Navigation.load "/" )
 
-                Just (Just qnaSessionId) ->
+                Just (QnaSessionRoute qnaSessionId) ->
                     case model.remoteData of
-                        CreatingQnaSession qnaSessionName ->
-                            ( { model
-                                | remoteData =
-                                    InQnaSession
-                                        (Types.initInQnaSession
-                                            qnaSessionId
-                                            (QnaSession.init qnaSessionName True)
-                                        )
-                              }
-                            , Cmd.none
-                            )
+                        InQnaSession inQnaSession ->
+                            if inQnaSession.qnaSessionId == qnaSessionId then
+                                ( model, Cmd.none )
+
+                            else
+                                ( model, Browser.Navigation.load (urlEncoder qnaSessionId) )
 
                         _ ->
                             ( model, Browser.Navigation.load (urlEncoder qnaSessionId) )
@@ -182,11 +197,6 @@ update msg model =
         PressedToggleUpvote questionId ->
             updateInQnaSession (addLocalChange (ToggleUpvote questionId)) model
 
-        PressedCloseHostBanner ->
-            updateInQnaSession
-                (\inQnaSession -> ( { inQnaSession | closedHostBanner = True }, Cmd.none ))
-                model
-
         PressedTogglePin questionId ->
             updateInQnaSession
                 (let
@@ -236,14 +246,46 @@ update msg model =
 
         PressedDeleteQuestion questionId ->
             updateInQnaSession
-                (let
-                    localMsg =
-                        DeleteQuestion
-                            questionId
-                 in
-                 addLocalChange localMsg
+                (addLocalChange (DeleteQuestion questionId))
+                model
+
+        PressedCopyHostUrl ->
+            updateInQnaSession
+                (\inQnaSession ->
+                    case inQnaSession.isHost of
+                        Just hostSecret ->
+                            ( { inQnaSession | copiedHostUrl = model.currentTime }
+                            , supermario_copy_to_clipboard_to_js (hostSecretToUrl hostSecret)
+                            )
+
+                        Nothing ->
+                            ( inQnaSession, Cmd.none )
                 )
                 model
+
+        PressedCopyUrl ->
+            updateInQnaSession
+                (\inQnaSession ->
+                    ( { inQnaSession | copiedUrl = model.currentTime }
+                    , supermario_copy_to_clipboard_to_js (domain ++ urlEncoder inQnaSession.qnaSessionId)
+                    )
+                )
+                model
+
+
+hostSecretToUrl : CryptographicKey HostSecret -> String
+hostSecretToUrl hostSecret =
+    domain ++ "/" ++ hostInvite ++ "/" ++ Id.crytographicKeyToString hostSecret
+
+
+domain : String
+domain =
+    "question-and-answer.app"
+
+
+hostInvite : String
+hostInvite =
+    "host-invite"
 
 
 addLocalChange : LocalQnaMsg -> InQnaSession_ -> ( InQnaSession_, Cmd FrontendMsg )
@@ -523,8 +565,8 @@ updateFromBackend msg model =
                         { model
                             | remoteData =
                                 case result of
-                                    Ok qnaSession ->
-                                        InQnaSession (Types.initInQnaSession qnaSessionId qnaSession)
+                                    Ok { isHost, qnaSession } ->
+                                        InQnaSession (Types.initInQnaSession qnaSessionId qnaSession isHost)
 
                                     Err () ->
                                         LoadingQnaSessionFailed ()
@@ -538,10 +580,46 @@ updateFromBackend msg model =
             , Cmd.none
             )
 
-        CreateQnaSessionResponse qnaSessionId ->
-            ( model
-            , Browser.Navigation.pushUrl model.key (urlEncoder qnaSessionId)
-            )
+        CreateQnaSessionResponse qnaSessionId hostSecret ->
+            case model.remoteData of
+                CreatingQnaSession qnaSessionName ->
+                    ( { model
+                        | remoteData =
+                            InQnaSession
+                                (Types.initInQnaSession
+                                    qnaSessionId
+                                    (QnaSession.init qnaSessionName)
+                                    (Just hostSecret)
+                                )
+                      }
+                    , Browser.Navigation.pushUrl model.key (urlEncoder qnaSessionId)
+                    )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        GetQnaSessionWithHostInviteResponse hostSecret result ->
+            case model.remoteData of
+                LoadingQnaSessionWithHostInvite hostSecret_ ->
+                    if hostSecret == hostSecret_ then
+                        case result of
+                            Ok ( qnaSessionId, qnaSession ) ->
+                                ( { model
+                                    | remoteData =
+                                        Types.initInQnaSession qnaSessionId qnaSession (Just hostSecret_)
+                                            |> InQnaSession
+                                  }
+                                , Browser.Navigation.replaceUrl model.key (urlEncoder qnaSessionId)
+                                )
+
+                            Err () ->
+                                ( { model | remoteData = LoadingQnaSessionFailed () }, Cmd.none )
+
+                    else
+                        ( model, Cmd.none )
+
+                _ ->
+                    ( model, Cmd.none )
 
 
 view : FrontendModel -> { title : String, body : List (Html FrontendMsg) }
@@ -565,6 +643,9 @@ view model =
                             }
                         ]
 
+                LoadingQnaSessionWithHostInvite _ ->
+                    Element.el [ Element.centerX, Element.centerY ] (Element.text "Loading...")
+
                 LoadingQnaSession _ ->
                     Element.el [ Element.centerX, Element.centerY ] (Element.text "Loading...")
 
@@ -582,94 +663,104 @@ view model =
                         qnaSession =
                             Network.localState qnaSessionUpdate inQnaSession.networkModel
                     in
-                    Element.el
-                        [ Element.inFront
-                            (if inQnaSession.closedHostBanner || not qnaSession.isHost then
-                                Element.none
-
-                             else
-                                hostBannerView
-                            )
-                        , Element.width Element.fill
+                    Element.column
+                        [ Element.spacing 16
+                        , Element.width <| Element.maximum 800 Element.fill
+                        , Element.centerX
+                        , Element.paddingXY 16 16
                         , Element.height Element.fill
                         ]
-                        (Element.column
-                            [ Element.spacing 16
-                            , Element.width <| Element.maximum 800 Element.fill
-                            , Element.centerX
-                            , Element.paddingXY 16 16
-                            , Element.height Element.fill
+                        [ Element.column
+                            [ Element.width Element.fill, Element.height Element.fill, Element.spacing 6 ]
+                            [ Element.text "Questions"
+                            , questionsView
+                                inQnaSession.qnaSessionId
+                                inQnaSession.copiedUrl
+                                model.currentTime
+                                (inQnaSession.isHost /= Nothing)
+                                qnaSession.userId
+                                qnaSession.questions
                             ]
-                            [ Element.column
-                                [ Element.width Element.fill, Element.height Element.fill, Element.spacing 6 ]
-                                [ Element.text "Questions"
-                                , questionsView
-                                    model.currentTime
-                                    qnaSession.isHost
-                                    qnaSession.userId
-                                    qnaSession.questions
-                                ]
-                            , if qnaSession.isHost then
-                                animatedParagraph
-                                    (Animation.fromTo
-                                        { duration = 2000, options = [] }
-                                        [ Property.opacity 0 ]
-                                        [ Property.opacity <|
-                                            if Dict.isEmpty qnaSession.questions then
-                                                0
+                        , case inQnaSession.isHost of
+                            Just _ ->
+                                hostView inQnaSession.copiedHostUrl qnaSession
 
-                                            else
-                                                1
-                                        ]
-                                    )
-                                    [ Element.Font.size 16
-                                    , (if Dict.isEmpty qnaSession.questions then
-                                        "none"
-
-                                       else
-                                        "auto"
-                                      )
-                                        |> Html.Attributes.style "pointer-events"
-                                        |> Element.htmlAttribute
-                                    ]
-                                    [ Element.text "Questions will be deleted after 14 days of inactivity. If you want to save them, "
-                                    , Element.Input.button
-                                        [ Element.Font.color <| Element.rgb 0.2 0.2 1
-                                        , Element.Border.widthEach { left = 0, right = 0, top = 0, bottom = 1 }
-                                        , Element.Border.color <| Element.rgba 0 0 0 0
-                                        , Element.mouseOver [ Element.Border.color <| Element.rgb 0.2 0.2 1 ]
-                                        ]
-                                        { onPress = Just PressedDownloadQuestions, label = Element.text "click here" }
-                                    , Element.text " to download them as a spreadsheet."
-                                    ]
-
-                              else
+                            Nothing ->
                                 questionInputView inQnaSession
-                            ]
-                        )
+                        ]
             )
         ]
     }
 
 
-hostBannerView : Element FrontendMsg
-hostBannerView =
-    Element.paragraph
-        [ Element.width Element.fill
-        , Element.Background.color <| Element.rgb 0.9 0.9 0.7
-        , Element.paddingXY 8 12
-        , Element.Font.center
-        , Element.spacing 8
-        ]
-        [ Element.text "You are the host. To invite people, copy the url in the address bar. "
-        , Element.Input.button
-            [ Element.Background.color <| Element.rgb 0.8 0.8 0.8
-            , Element.paddingXY 8 4
-            , Element.Border.rounded 4
+hostView : Maybe Time.Posix -> QnaSession -> Element FrontendMsg
+hostView copiedHostUrl qnaSession =
+    Element.column
+        [ Element.width Element.fill, Element.spacing 16 ]
+        [ copyHostUrlButton copiedHostUrl
+        , animatedParagraph
+            (Animation.fromTo
+                { duration = 2000, options = [] }
+                [ Property.opacity 0 ]
+                [ Property.opacity <|
+                    if Dict.isEmpty qnaSession.questions then
+                        0
+
+                    else
+                        1
+                ]
+            )
+            [ Element.Font.size 16
+            , (if Dict.isEmpty qnaSession.questions then
+                "none"
+
+               else
+                "auto"
+              )
+                |> Html.Attributes.style "pointer-events"
+                |> Element.htmlAttribute
             ]
-            { onPress = Just PressedCloseHostBanner
-            , label = Element.text "OK"
+            [ Element.text "Questions will be deleted after 14 days of inactivity. "
+            , Element.Input.button
+                [ Element.Font.color <| Element.rgb 0.2 0.2 1
+                , Element.Border.widthEach { left = 0, right = 0, top = 0, bottom = 1 }
+                , Element.Border.color <| Element.rgba 0 0 0 0
+                , Element.mouseOver [ Element.Border.color <| Element.rgb 0.2 0.2 1 ]
+                ]
+                { onPress = Just PressedDownloadQuestions, label = Element.text "Click here" }
+            , Element.text " to download them."
+            ]
+        ]
+
+
+copyHostUrlButton : Maybe Time.Posix -> Element FrontendMsg
+copyHostUrlButton copiedHostUrl =
+    Element.row
+        [ Element.width Element.fill, Element.spacing 16 ]
+        [ Element.Input.button
+            buttonStyle
+            { onPress = Just PressedCopyHostUrl
+            , label = Element.text "Add another host"
             }
+        , case copiedHostUrl of
+            Just copiedTime ->
+                Element.Keyed.el
+                    [ Element.width Element.fill ]
+                    ( Time.posixToMillis copiedTime |> String.fromInt
+                    , animatedParagraph
+                        (Animation.steps
+                            { options = [], startAt = [ Property.opacity 0 ] }
+                            [ Animation.step 100 [ Property.opacity 1 ]
+                            , Animation.step 20000 [ Property.opacity 1 ]
+                            , Animation.step 3000 [ Property.opacity 0 ]
+                            ]
+                        )
+                        []
+                        [ Element.text "Host invite link copied. Paste it to someone so they can join as a host." ]
+                    )
+
+            Nothing ->
+                Element.none
         ]
 
 
@@ -772,8 +863,15 @@ errorColor =
     Element.rgb 0.8 0.2 0.2
 
 
-questionsView : Maybe Time.Posix -> Bool -> UserId -> Dict QuestionId Question -> Element FrontendMsg
-questionsView currentTime isHost userId questions =
+questionsView :
+    CryptographicKey QnaSessionId
+    -> Maybe Time.Posix
+    -> Maybe Time.Posix
+    -> Bool
+    -> UserId
+    -> Dict QuestionId Question
+    -> Element FrontendMsg
+questionsView qnaSessionId maybeCopiedUrl currentTime isHost userId questions =
     let
         containerStyle =
             [ Element.height Element.fill
@@ -827,19 +925,68 @@ questionsView currentTime isHost userId questions =
     in
     if Dict.isEmpty questions then
         Element.el containerStyle
-            (Element.el
-                [ Element.centerX
+            (Element.column
+                [ Element.width Element.fill
                 , Element.centerY
-                , Element.Font.size 32
-                , Element.Font.color <| Element.rgb 0.6 0.6 0.6
+                , Element.spacing 16
+                , Element.padding 8
                 ]
-                (Element.text "No questions yet...")
+                (emptyContainer qnaSessionId isHost maybeCopiedUrl)
             )
 
     else
         pinnedQuestions
             ++ unpinnedQuestions
             |> Element.Keyed.column containerStyle
+
+
+emptyContainer : CryptographicKey QnaSessionId -> Bool -> Maybe Time.Posix -> List (Element FrontendMsg)
+emptyContainer qnaSessionId isHost maybeCopiedUrl =
+    if isHost then
+        [ Element.el [ Element.centerX, Element.Font.size 36 ] (Element.text "You are the host!")
+        , Element.column
+            [ Element.width Element.fill, Element.spacing 8 ]
+            [ Element.paragraph
+                [ Element.Font.center, Element.Font.size 20 ]
+                [ Element.text "Copy the link below so people can ask you questions:" ]
+            , Element.Input.button
+                [ Element.centerX
+                , Element.Font.size 20
+                , Element.onRight <|
+                    case maybeCopiedUrl of
+                        Just copiedUrl ->
+                            Element.Keyed.el
+                                []
+                                ( Time.posixToMillis copiedUrl |> String.fromInt
+                                , animatedEl
+                                    (Animation.steps
+                                        { options = [], startAt = [ Property.opacity 0 ] }
+                                        [ Animation.step 100 [ Property.opacity 1 ]
+                                        , Animation.step 1000 [ Property.opacity 1 ]
+                                        , Animation.step 3000 [ Property.opacity 0 ]
+                                        ]
+                                    )
+                                    [ Element.paddingEach { left = 4, right = 0, top = 0, bottom = 0 } ]
+                                    (Element.text "Copied!")
+                                )
+
+                        Nothing ->
+                            Element.none
+                ]
+                { onPress = Just PressedCopyUrl
+                , label =
+                    Element.row
+                        [ Element.spacing 2 ]
+                        [ Element.text (domain ++ urlEncoder qnaSessionId), Element.text "📋" ]
+                }
+            ]
+        ]
+
+    else
+        [ Element.paragraph
+            [ Element.Font.color <| Element.rgb 0.6 0.6 0.6, Element.Font.size 30, Element.Font.center ]
+            [ Element.text "No questions yet. You\u{00A0}can be the first to write one!" ]
+        ]
 
 
 animatedUi : (List (Element.Attribute msg) -> children -> Element msg) -> Animation -> List (Element.Attribute msg) -> children -> Element msg
@@ -859,6 +1006,11 @@ animatedParagraph =
 animatedRow : Animation -> List (Element.Attribute msg) -> List (Element msg) -> Element msg
 animatedRow =
     animatedUi Element.row
+
+
+animatedEl : Animation -> List (Element.Attribute msg) -> Element msg -> Element msg
+animatedEl =
+    animatedUi Element.el
 
 
 questionView : Bool -> Bool -> Maybe Time.Posix -> Bool -> UserId -> QuestionId -> Question -> Element FrontendMsg
