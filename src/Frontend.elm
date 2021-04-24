@@ -655,7 +655,7 @@ view model =
     { title = "Q&A"
     , body =
         [ Element.layout
-            []
+            [ Element.inFront (notConnectedView model) ]
             (case model.remoteData of
                 Homepage ->
                     Element.column
@@ -697,7 +697,6 @@ view model =
                         , Element.centerX
                         , Element.paddingXY 16 16
                         , Element.height Element.fill
-                        , Element.inFront (notConnectedView model)
                         ]
                         [ Element.column
                             [ Element.width Element.fill, Element.height Element.fill, Element.spacing 6 ]

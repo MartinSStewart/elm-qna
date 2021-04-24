@@ -5,6 +5,7 @@ import Backend
 import Duration
 import Expect exposing (Expectation)
 import Fuzz exposing (Fuzzer, int, list, string)
+import Id
 import QnaSession
 import String.Nonempty exposing (NonemptyString(..))
 import Test exposing (..)
@@ -60,6 +61,7 @@ suite =
                 QnaSession.initBackend
                     "sessionId"
                     "clientId"
+                    (Id.getShortCryptographicKey { keyCounter = 0 } |> Tuple.second)
                     startTime
                     (NonemptyString 'T' "est")
                     |> QnaSession.lastActivity
