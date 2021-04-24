@@ -275,7 +275,7 @@ update msg model =
                     case inQnaSession.isHost of
                         Just hostSecret ->
                             ( { inQnaSession | copiedHostUrl = model.currentTime }
-                            , supermario_copy_to_clipboard_to_js (hostSecretToUrl hostSecret)
+                            , supermario_copy_to_clipboard_to_js ("https://" ++ hostSecretToUrl hostSecret)
                             )
 
                         Nothing ->
@@ -287,7 +287,7 @@ update msg model =
             updateInQnaSession
                 (\inQnaSession ->
                     ( { inQnaSession | copiedUrl = model.currentTime }
-                    , supermario_copy_to_clipboard_to_js (domain ++ urlEncoder inQnaSession.qnaSessionId)
+                    , supermario_copy_to_clipboard_to_js ("https://" ++ domain ++ urlEncoder inQnaSession.qnaSessionId)
                     )
                 )
                 model
