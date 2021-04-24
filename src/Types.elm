@@ -17,6 +17,7 @@ type alias FrontendModel =
     { key : Key
     , remoteData : FrontendStatus
     , currentTime : Maybe Time.Posix
+    , lastConnectionCheck : Maybe Time.Posix
     }
 
 
@@ -105,6 +106,7 @@ type FrontendMsg
     | PressedDeleteQuestion QuestionId
     | PressedCopyHostUrl
     | PressedCopyUrl
+    | CheckIfConnected Time.Posix
 
 
 type ToBackend
@@ -112,6 +114,7 @@ type ToBackend
     | GetQnaSession (CryptographicKey QnaSessionId)
     | GetQnaSessionWithHostInvite (CryptographicKey HostSecret)
     | CreateQnaSession NonemptyString
+    | CheckIfConnectedRequest
 
 
 type BackendMsg
@@ -134,3 +137,4 @@ type ToFrontend
         )
     | GetQnaSessionWithHostInviteResponse (CryptographicKey HostSecret) (Result () ( CryptographicKey QnaSessionId, QnaSession ))
     | CreateQnaSessionResponse (CryptographicKey QnaSessionId) (CryptographicKey HostSecret)
+    | CheckIfConnectedResponse

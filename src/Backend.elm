@@ -372,3 +372,6 @@ updateFromFrontendWithTime sessionId clientId msg model currentTime =
               }
             , Lamdera.sendToFrontend clientId (CreateQnaSessionResponse qnaSessionId hostSecret)
             )
+
+        CheckIfConnectedRequest ->
+            ( model, Lamdera.sendToFrontend clientId CheckIfConnectedResponse )

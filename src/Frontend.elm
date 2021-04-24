@@ -5,6 +5,7 @@ import Browser exposing (UrlRequest(..))
 import Browser.Dom
 import Browser.Navigation
 import Csv.Encode
+import Duration
 import Element exposing (Element)
 import Element.Background
 import Element.Border
@@ -20,6 +21,7 @@ import Json.Decode
 import Lamdera
 import Network exposing (Change(..))
 import QnaSession exposing (QnaSession)
+import Quantity
 import Question exposing (Question, QuestionId)
 import Simple.Animation as Animation exposing (Animation)
 import Simple.Animation.Animated as Animated
@@ -53,7 +55,12 @@ app =
         , onUrlChange = UrlChanged
         , update = update
         , updateFromBackend = updateFromBackend
-        , subscriptions = \_ -> Time.every 1000 GotCurrentTime
+        , subscriptions =
+            \_ ->
+                Sub.batch
+                    [ Time.every 1000 GotCurrentTime
+                    , Time.every 10000 CheckIfConnected
+                    ]
         , view = view
         }
 
@@ -62,22 +69,30 @@ init : Url.Url -> Browser.Navigation.Key -> ( FrontendModel, Cmd FrontendMsg )
 init url key =
     case Url.Parser.parse urlDecoder url of
         Just (QnaSessionRoute qnaSessionId) ->
-            ( { key = key, remoteData = LoadingQnaSession qnaSessionId, currentTime = Nothing }
+            ( { key = key
+              , remoteData = LoadingQnaSession qnaSessionId
+              , currentTime = Nothing
+              , lastConnectionCheck = Nothing
+              }
             , Lamdera.sendToBackend (GetQnaSession qnaSessionId)
             )
 
         Just (HostInviteRoute hostSecret) ->
-            ( { key = key, remoteData = LoadingQnaSessionWithHostInvite hostSecret, currentTime = Nothing }
+            ( { key = key
+              , remoteData = LoadingQnaSessionWithHostInvite hostSecret
+              , currentTime = Nothing
+              , lastConnectionCheck = Nothing
+              }
             , Lamdera.sendToBackend (GetQnaSessionWithHostInvite hostSecret)
             )
 
         Just HomepageRoute ->
-            ( { key = key, remoteData = Homepage, currentTime = Nothing }
+            ( { key = key, remoteData = Homepage, currentTime = Nothing, lastConnectionCheck = Nothing }
             , Cmd.none
             )
 
         Nothing ->
-            ( { key = key, remoteData = Homepage, currentTime = Nothing }
+            ( { key = key, remoteData = Homepage, currentTime = Nothing, lastConnectionCheck = Nothing }
             , Cmd.none
             )
 
@@ -210,7 +225,12 @@ update msg model =
                 model
 
         GotCurrentTime currentTime ->
-            ( { model | currentTime = Just currentTime }, Cmd.none )
+            ( { model
+                | currentTime = Just currentTime
+                , lastConnectionCheck = Maybe.withDefault currentTime model.lastConnectionCheck |> Just
+              }
+            , Cmd.none
+            )
 
         PressedDownloadQuestions ->
             updateInQnaSession
@@ -271,6 +291,9 @@ update msg model =
                     )
                 )
                 model
+
+        CheckIfConnected _ ->
+            ( model, Lamdera.sendToBackend CheckIfConnectedRequest )
 
 
 hostSecretToUrl : CryptographicKey HostSecret -> String
@@ -621,6 +644,11 @@ updateFromBackend msg model =
                 _ ->
                     ( model, Cmd.none )
 
+        CheckIfConnectedResponse ->
+            ( { model | lastConnectionCheck = model.currentTime }
+            , Cmd.none
+            )
+
 
 view : FrontendModel -> { title : String, body : List (Html FrontendMsg) }
 view model =
@@ -669,6 +697,7 @@ view model =
                         , Element.centerX
                         , Element.paddingXY 16 16
                         , Element.height Element.fill
+                        , Element.inFront (notConnectedView model)
                         ]
                         [ Element.column
                             [ Element.width Element.fill, Element.height Element.fill, Element.spacing 6 ]
@@ -691,6 +720,29 @@ view model =
             )
         ]
     }
+
+
+notConnectedView : FrontendModel -> Element msg
+notConnectedView model =
+    case ( model.lastConnectionCheck, model.currentTime ) of
+        ( Just lastCheck, Just currentTime ) ->
+            if
+                Duration.from lastCheck currentTime
+                    |> Quantity.lessThan (Duration.seconds 30)
+            then
+                Element.none
+
+            else
+                Element.paragraph
+                    [ Element.width Element.fill
+                    , Element.Background.color <| Element.rgb 1 0.6 0.6
+                    , Element.padding 16
+                    , Element.Font.center
+                    ]
+                    [ Element.text "I can't reach the server! Try refreshing the page?" ]
+
+        _ ->
+            Element.none
 
 
 hostView : Maybe Time.Posix -> QnaSession -> Element FrontendMsg
