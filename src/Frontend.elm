@@ -1,4 +1,4 @@
-port module Frontend exposing (app, init, update, updateFromBackend, view)
+port module Frontend exposing (app, domain, init, update, updateFromBackend, view)
 
 import AssocList as Dict exposing (Dict)
 import Browser exposing (UrlRequest(..))
@@ -32,10 +32,12 @@ import Time
 import Types
     exposing
         ( ConfirmLocalQnaMsg(..)
+        , FrontendEffect(..)
         , FrontendModel
         , FrontendMsg(..)
         , FrontendStatus(..)
         , InQnaSession_
+        , Key(..)
         , LocalQnaMsg(..)
         , ServerQnaMsg(..)
         , ToBackend(..)
@@ -50,11 +52,11 @@ port supermario_copy_to_clipboard_to_js : String -> Cmd msg
 
 app =
     Lamdera.frontend
-        { init = init
+        { init = \url key -> init url (ActualKey key) |> Tuple.mapSecond effectToCmd
         , onUrlRequest = UrlClicked
         , onUrlChange = UrlChanged
-        , update = update
-        , updateFromBackend = updateFromBackend
+        , update = \msg model -> update msg model |> Tuple.mapSecond effectToCmd
+        , updateFromBackend = \msg model -> updateFromBackend msg model |> Tuple.mapSecond effectToCmd
         , subscriptions =
             \_ ->
                 Sub.batch
@@ -65,7 +67,53 @@ app =
         }
 
 
-init : Url.Url -> Browser.Navigation.Key -> ( FrontendModel, Cmd FrontendMsg )
+effectToCmd : FrontendEffect -> Cmd FrontendMsg
+effectToCmd effect =
+    case effect of
+        Batch_ frontendEffects ->
+            List.map effectToCmd frontendEffects |> Cmd.batch
+
+        SendToBackend toBackend ->
+            Lamdera.sendToBackend toBackend
+
+        PushUrl key url ->
+            case key of
+                FakeKey ->
+                    Cmd.none
+
+                ActualKey key_ ->
+                    Browser.Navigation.pushUrl key_ url
+
+        ReplaceUrl key url ->
+            case key of
+                FakeKey ->
+                    Cmd.none
+
+                ActualKey key_ ->
+                    Browser.Navigation.replaceUrl key_ url
+
+        LoadUrl url ->
+            Browser.Navigation.load url
+
+        FileDownload name mime content ->
+            File.Download.string name mime content
+
+        CopyToClipboard text ->
+            supermario_copy_to_clipboard_to_js text
+
+        ScrollToBottom viewportId ->
+            Browser.Dom.getViewportOf viewportId
+                |> Task.andThen
+                    (\{ scene, viewport } ->
+                        scrollToOf 200 questionsViewId (scene.height - viewport.height)
+                    )
+                |> Task.attempt (always NoOpFrontendMsg)
+
+        Blur id ->
+            Browser.Dom.blur id |> Task.attempt (always NoOpFrontendMsg)
+
+
+init : Url.Url -> Key -> ( FrontendModel, FrontendEffect )
 init url key =
     case Url.Parser.parse urlDecoder url of
         Just (QnaSessionRoute qnaSessionId) ->
@@ -74,7 +122,7 @@ init url key =
               , currentTime = Nothing
               , lastConnectionCheck = Nothing
               }
-            , Lamdera.sendToBackend (GetQnaSession qnaSessionId)
+            , SendToBackend (GetQnaSession qnaSessionId)
             )
 
         Just (HostInviteRoute hostSecret) ->
@@ -83,17 +131,17 @@ init url key =
               , currentTime = Nothing
               , lastConnectionCheck = Nothing
               }
-            , Lamdera.sendToBackend (GetQnaSessionWithHostInvite hostSecret)
+            , SendToBackend (GetQnaSessionWithHostInvite hostSecret)
             )
 
         Just HomepageRoute ->
             ( { key = key, remoteData = Homepage, currentTime = Nothing, lastConnectionCheck = Nothing }
-            , Cmd.none
+            , Batch_ []
             )
 
         Nothing ->
             ( { key = key, remoteData = Homepage, currentTime = Nothing, lastConnectionCheck = Nothing }
-            , Cmd.none
+            , Batch_ []
             )
 
 
@@ -117,58 +165,58 @@ urlEncoder (CryptographicKey qnaSessionId) =
     "/" ++ qnaSessionId
 
 
-update : FrontendMsg -> FrontendModel -> ( FrontendModel, Cmd FrontendMsg )
+update : FrontendMsg -> FrontendModel -> ( FrontendModel, FrontendEffect )
 update msg model =
     case msg of
         UrlClicked urlRequest ->
             case urlRequest of
                 Internal url ->
                     ( model
-                    , Cmd.batch [ Browser.Navigation.pushUrl model.key (Url.toString url) ]
+                    , PushUrl model.key (Url.toString url)
                     )
 
                 External url ->
                     ( model
-                    , Browser.Navigation.load url
+                    , LoadUrl url
                     )
 
         UrlChanged url ->
             case Url.Parser.parse urlDecoder url of
                 Just HomepageRoute ->
-                    ( model, Browser.Navigation.load "/" )
+                    ( model, LoadUrl "/" )
 
                 Just (QnaSessionRoute qnaSessionId) ->
                     case model.remoteData of
                         InQnaSession inQnaSession ->
                             if inQnaSession.qnaSessionId == qnaSessionId then
-                                ( model, Cmd.none )
+                                ( model, Batch_ [] )
 
                             else
-                                ( model, Browser.Navigation.load (urlEncoder qnaSessionId) )
+                                ( model, LoadUrl (urlEncoder qnaSessionId) )
 
                         _ ->
-                            ( model, Browser.Navigation.load (urlEncoder qnaSessionId) )
+                            ( model, LoadUrl (urlEncoder qnaSessionId) )
 
                 _ ->
-                    ( model, Cmd.none )
+                    ( model, Batch_ [] )
 
         NoOpFrontendMsg ->
-            ( model, Cmd.none )
+            ( model, Batch_ [] )
 
         PressedCreateQnaSession ->
             let
                 name =
                     NonemptyString 'T' "est"
             in
-            ( { model | remoteData = CreatingQnaSession name }, Lamdera.sendToBackend (CreateQnaSession name) )
+            ( { model | remoteData = CreatingQnaSession name }, SendToBackend (CreateQnaSession name) )
 
         TypedQuestion text ->
             case model.remoteData of
                 InQnaSession inQnaSession ->
-                    ( { model | remoteData = InQnaSession { inQnaSession | question = text } }, Cmd.none )
+                    ( { model | remoteData = InQnaSession { inQnaSession | question = text } }, Batch_ [] )
 
                 _ ->
-                    ( model, Cmd.none )
+                    ( model, Batch_ [] )
 
         PressedCreateQuestion ->
             updateInQnaSession
@@ -189,22 +237,17 @@ update msg model =
                                 , pressedCreateQuestion = False
                                 , localChangeCounter = Network.incrementChangeId inQnaSession.localChangeCounter
                               }
-                            , Cmd.batch
-                                [ Lamdera.sendToBackend
+                            , Batch_
+                                [ SendToBackend
                                     (LocalMsgRequest inQnaSession.qnaSessionId inQnaSession.localChangeCounter localMsg)
-                                , Browser.Dom.getViewportOf questionsViewId
-                                    |> Task.andThen
-                                        (\{ scene, viewport } ->
-                                            scrollToOf 200 questionsViewId (scene.height - viewport.height)
-                                        )
-                                    |> Task.attempt (always NoOpFrontendMsg)
-                                , Browser.Dom.blur questionInputId |> Task.attempt (always NoOpFrontendMsg)
+                                , ScrollToBottom questionsViewId
+                                , Blur questionInputId
                                 ]
                             )
 
                         Err _ ->
                             ( { inQnaSession | pressedCreateQuestion = True }
-                            , Cmd.none
+                            , Batch_ []
                             )
                 )
                 model
@@ -229,14 +272,14 @@ update msg model =
                 | currentTime = Just currentTime
                 , lastConnectionCheck = Maybe.withDefault currentTime model.lastConnectionCheck |> Just
               }
-            , Cmd.none
+            , Batch_ []
             )
 
         PressedDownloadQuestions ->
             updateInQnaSession
                 (\inQnaSession ->
                     ( inQnaSession
-                    , File.Download.string
+                    , FileDownload
                         "questions.csv"
                         "text/csv"
                         (Csv.Encode.encode
@@ -275,11 +318,11 @@ update msg model =
                     case inQnaSession.isHost of
                         Just hostSecret ->
                             ( { inQnaSession | copiedHostUrl = model.currentTime }
-                            , supermario_copy_to_clipboard_to_js ("https://" ++ hostSecretToUrl hostSecret)
+                            , CopyToClipboard ("https://" ++ hostSecretToUrl hostSecret)
                             )
 
                         Nothing ->
-                            ( inQnaSession, Cmd.none )
+                            ( inQnaSession, Batch_ [] )
                 )
                 model
 
@@ -287,13 +330,13 @@ update msg model =
             updateInQnaSession
                 (\inQnaSession ->
                     ( { inQnaSession | copiedUrl = model.currentTime }
-                    , supermario_copy_to_clipboard_to_js ("https://" ++ domain ++ urlEncoder inQnaSession.qnaSessionId)
+                    , CopyToClipboard ("https://" ++ domain ++ urlEncoder inQnaSession.qnaSessionId)
                     )
                 )
                 model
 
         CheckIfConnected _ ->
-            ( model, Lamdera.sendToBackend CheckIfConnectedRequest )
+            ( model, SendToBackend CheckIfConnectedRequest )
 
 
 hostSecretToUrl : CryptographicKey HostSecret -> String
@@ -311,7 +354,7 @@ hostInvite =
     "host-invite"
 
 
-addLocalChange : LocalQnaMsg -> InQnaSession_ -> ( InQnaSession_, Cmd FrontendMsg )
+addLocalChange : LocalQnaMsg -> InQnaSession_ -> ( InQnaSession_, FrontendEffect )
 addLocalChange localMsg inQnaSession =
     ( { inQnaSession
         | networkModel =
@@ -321,7 +364,7 @@ addLocalChange localMsg inQnaSession =
                 inQnaSession.networkModel
         , localChangeCounter = Network.incrementChangeId inQnaSession.localChangeCounter
       }
-    , Lamdera.sendToBackend (LocalMsgRequest inQnaSession.qnaSessionId inQnaSession.localChangeCounter localMsg)
+    , SendToBackend (LocalMsgRequest inQnaSession.qnaSessionId inQnaSession.localChangeCounter localMsg)
     )
 
 
@@ -374,7 +417,7 @@ position millis start end elapsed =
         end
 
 
-updateInQnaSession : (InQnaSession_ -> ( InQnaSession_, Cmd FrontendMsg )) -> FrontendModel -> ( FrontendModel, Cmd FrontendMsg )
+updateInQnaSession : (InQnaSession_ -> ( InQnaSession_, FrontendEffect )) -> FrontendModel -> ( FrontendModel, FrontendEffect )
 updateInQnaSession updateFunc model =
     case model.remoteData of
         InQnaSession inQnaSession ->
@@ -382,7 +425,7 @@ updateInQnaSession updateFunc model =
                 |> Tuple.mapFirst (\a -> { model | remoteData = InQnaSession a })
 
         _ ->
-            ( model, Cmd.none )
+            ( model, Batch_ [] )
 
 
 toggleUpvote : QuestionId -> QnaSession -> QnaSession
@@ -542,7 +585,7 @@ qnaSessionUpdate msg qnaSession =
             deleteQuestion questionId qnaSession
 
 
-updateFromBackend : ToFrontend -> FrontendModel -> ( FrontendModel, Cmd FrontendMsg )
+updateFromBackend : ToFrontend -> FrontendModel -> ( FrontendModel, FrontendEffect )
 updateFromBackend msg model =
     case msg of
         ServerMsgResponse qnaSessionId serverQnaMsg ->
@@ -556,7 +599,7 @@ updateFromBackend msg model =
 
                       else
                         inQnaSession
-                    , Cmd.none
+                    , Batch_ []
                     )
                 )
                 model
@@ -576,7 +619,7 @@ updateFromBackend msg model =
 
                       else
                         inQnaSession
-                    , Cmd.none
+                    , Batch_ []
                     )
                 )
                 model
@@ -600,7 +643,7 @@ updateFromBackend msg model =
 
                 _ ->
                     model
-            , Cmd.none
+            , Batch_ []
             )
 
         CreateQnaSessionResponse qnaSessionId hostSecret ->
@@ -615,11 +658,11 @@ updateFromBackend msg model =
                                     (Just hostSecret)
                                 )
                       }
-                    , Browser.Navigation.pushUrl model.key (urlEncoder qnaSessionId)
+                    , PushUrl model.key (urlEncoder qnaSessionId)
                     )
 
                 _ ->
-                    ( model, Cmd.none )
+                    ( model, Batch_ [] )
 
         GetQnaSessionWithHostInviteResponse hostSecret result ->
             case model.remoteData of
@@ -632,21 +675,21 @@ updateFromBackend msg model =
                                         Types.initInQnaSession qnaSessionId qnaSession (Just hostSecret_)
                                             |> InQnaSession
                                   }
-                                , Browser.Navigation.replaceUrl model.key (urlEncoder qnaSessionId)
+                                , ReplaceUrl model.key (urlEncoder qnaSessionId)
                                 )
 
                             Err () ->
-                                ( { model | remoteData = LoadingQnaSessionFailed () }, Cmd.none )
+                                ( { model | remoteData = LoadingQnaSessionFailed () }, Batch_ [] )
 
                     else
-                        ( model, Cmd.none )
+                        ( model, Batch_ [] )
 
                 _ ->
-                    ( model, Cmd.none )
+                    ( model, Batch_ [] )
 
         CheckIfConnectedResponse ->
             ( { model | lastConnectionCheck = model.currentTime }
-            , Cmd.none
+            , Batch_ []
             )
 
 

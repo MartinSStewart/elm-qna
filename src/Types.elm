@@ -2,7 +2,7 @@ module Types exposing (..)
 
 import AssocList as Dict exposing (Dict)
 import Browser exposing (UrlRequest)
-import Browser.Navigation exposing (Key)
+import Browser.Navigation
 import Id exposing (CryptographicKey, HostSecret, QnaSessionId, UserId(..))
 import Lamdera exposing (ClientId, SessionId)
 import Network exposing (ChangeId, NetworkModel)
@@ -19,6 +19,11 @@ type alias FrontendModel =
     , currentTime : Maybe Time.Posix
     , lastConnectionCheck : Maybe Time.Posix
     }
+
+
+type Key
+    = FakeKey
+    | ActualKey Browser.Navigation.Key
 
 
 type FrontendStatus
@@ -138,3 +143,21 @@ type ToFrontend
     | GetQnaSessionWithHostInviteResponse (CryptographicKey HostSecret) (Result () ( CryptographicKey QnaSessionId, QnaSession ))
     | CreateQnaSessionResponse (CryptographicKey QnaSessionId) (CryptographicKey HostSecret)
     | CheckIfConnectedResponse
+
+
+type BackendEffect
+    = Batch (List BackendEffect)
+    | SendToFrontend ClientId ToFrontend
+    | TimeNow (Time.Posix -> BackendMsg)
+
+
+type FrontendEffect
+    = Batch_ (List FrontendEffect)
+    | SendToBackend ToBackend
+    | PushUrl Key String
+    | ReplaceUrl Key String
+    | LoadUrl String
+    | FileDownload String String String
+    | CopyToClipboard String
+    | ScrollToBottom String
+    | Blur String
