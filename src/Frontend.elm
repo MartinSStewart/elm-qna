@@ -1171,14 +1171,19 @@ upvoteButton questionId question =
         , Element.padding 8
         , Element.Background.color <|
             if question.isUpvoted then
-                Element.rgb 0.65 0.65 0.65
+                Element.rgb 0.92 0.78 0.68
 
             else
                 Element.rgb 0.9 0.9 0.9
         , Element.width <| Element.px 48
         , Element.height <| Element.px 48
         , Element.Border.width 2
-        , Element.Border.color <| Element.rgb 0.4 0.4 0.4
+        , Element.Border.color <|
+            if question.isUpvoted then
+                Element.rgb 0.8 0.4 0.35
+
+            else
+                Element.rgb 0.4 0.4 0.4
         ]
         { onPress = Just (PressedToggleUpvote questionId)
         , label =
