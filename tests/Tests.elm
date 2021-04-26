@@ -68,12 +68,24 @@ suite =
                     |> Expect.equal startTime
         , test "a" <|
             \_ ->
-                let
-                    backend =
-                        Backend.init
-                in
-                0
+                init
+                    |> runEffects
+                    |> connectFrontend (unsafeUrl "https://question-and-answer.app")
+                    |> (\( newState, clientId ) ->
+                            runEffects newState
+                       )
+                    |> always (Expect.fail "")
         ]
+
+
+unsafeUrl : String -> Url
+unsafeUrl urlText =
+    case Url.fromString urlText of
+        Just url ->
+            url
+
+        Nothing ->
+            Debug.todo ("Invalid url " ++ urlText)
 
 
 type alias State =
@@ -130,42 +142,34 @@ runEffects : State -> State
 runEffects state =
     let
         state2 =
-            { state
-                | pendingEffects = Batch []
-                , frontends = Dict.map (\_ frontend -> { frontend | pendingEffects = Batch_ [] }) state.frontends
-            }
+            runBackendEffects
+                state.pendingEffects
+                { state
+                    | pendingEffects = Batch []
+                    , frontends = Dict.map (\_ frontend -> { frontend | pendingEffects = Batch_ [] }) state.frontends
+                }
 
-        ( state3, newBackendEffects ) =
-            runBackendEffects state.pendingEffects state2
+        state4 =
+            Dict.foldl
+                (\clientId frontend state3 ->
+                    runFrontendEffects frontend.sessionId clientId frontend.pendingEffects state3
+                )
+                state2
+                state.frontends
     in
-    Dict.foldl
-        (\clientId frontend state4 ->
-            let
-                ( state5, newFrontendEffects ) =
-                    runFrontendEffects frontend.sessionId clientId frontend.pendingEffects state4
-            in
-            state5
-        )
-        state3
-        state.frontends
+    { state4
+        | pendingEffects = flattenBackendEffect state.pendingEffects |> Batch
+    }
 
 
-runFrontendEffects : SessionId -> ClientId -> FrontendEffect -> State -> ( State, FrontendEffect )
+runFrontendEffects : SessionId -> ClientId -> FrontendEffect -> State -> State
 runFrontendEffects sessionId clientId effect state =
     case effect of
         Batch_ effects ->
-            List.foldl
-                (\pendingEffect ( state_, newEffects ) ->
-                    runFrontendEffects sessionId clientId pendingEffect state_
-                        |> Tuple.mapSecond (\a -> Batch_ [ a, newEffects ])
-                )
-                ( state, Batch_ [] )
-                effects
+            List.foldl (runFrontendEffects sessionId clientId) state effects
 
         SendToBackend toBackend ->
-            ( { state | toBackend = state.toBackend ++ [ ( sessionId, clientId, toBackend ) ] }
-            , Batch_ []
-            )
+            { state | toBackend = state.toBackend ++ [ ( sessionId, clientId, toBackend ) ] }
 
         PushUrl _ urlText ->
             handleUrlChange urlText clientId state
@@ -177,19 +181,19 @@ runFrontendEffects sessionId clientId effect state =
             handleUrlChange urlText clientId state
 
         FileDownload _ _ _ ->
-            ( state, Batch_ [] )
+            state
 
         CopyToClipboard _ ->
-            ( state, Batch_ [] )
+            state
 
         ScrollToBottom _ ->
-            ( state, Batch_ [] )
+            state
 
         Blur _ ->
-            ( state, Batch_ [] )
+            state
 
 
-handleUrlChange : String -> ClientId -> State -> ( State, FrontendEffect )
+handleUrlChange : String -> ClientId -> State -> State
 handleUrlChange urlText clientId state =
     let
         urlText_ =
@@ -212,10 +216,10 @@ handleUrlChange urlText clientId state =
                     )
 
                 Nothing ->
-                    ( state, Batch_ [] )
+                    state
 
         Nothing ->
-            ( state, Batch_ [] )
+            state
 
 
 flattenFrontendEffect : FrontendEffect -> List FrontendEffect
@@ -238,32 +242,24 @@ flattenBackendEffect effect =
             [ effect ]
 
 
-runBackendEffects : BackendEffect -> State -> ( State, BackendEffect )
+runBackendEffects : BackendEffect -> State -> State
 runBackendEffects effect state =
     case effect of
         Batch effects ->
-            List.foldl
-                (\pendingEffect ( state_, newEffects ) ->
-                    runBackendEffects pendingEffect state_
-                        |> Tuple.mapSecond (\a -> Batch [ a, newEffects ])
-                )
-                ( state, Batch [] )
-                effects
+            List.foldl runBackendEffects state effects
 
         SendToFrontend clientId toFrontend ->
-            ( { state
+            { state
                 | frontends =
                     Dict.update
                         clientId
                         (Maybe.map (\frontend -> { frontend | toFrontend = frontend.toFrontend ++ [ toFrontend ] }))
                         state.frontends
-              }
-            , Batch []
-            )
+            }
 
         TimeNow msg ->
             let
                 ( model, effects ) =
                     Backend.update (msg state.time) state.backend
             in
-            ( { state | backend = model }, effects )
+            { state | backend = model, pendingEffects = Batch [ state.pendingEffects, effects ] }
