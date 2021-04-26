@@ -5,9 +5,11 @@ import Backend
 import Duration
 import Expect exposing (Expectation)
 import Frontend
-import Id
+import Id exposing (UserId(..))
 import Lamdera exposing (ClientId, SessionId)
 import QnaSession
+import Question exposing (QuestionId(..))
+import Set
 import String.Nonempty exposing (NonemptyString(..))
 import Test exposing (..)
 import Time
@@ -66,15 +68,69 @@ suite =
                     (NonemptyString 'T' "est")
                     |> QnaSession.lastActivity
                     |> Expect.equal startTime
-        , test "a" <|
+        , test "Create question" <|
             \_ ->
                 init
                     |> runEffects
+                    |> runEffects
                     |> connectFrontend (unsafeUrl "https://question-and-answer.app")
-                    |> (\( newState, clientId ) ->
-                            runEffects newState
+                    |> (\( state, clientId ) ->
+                            runEffects state
+                                |> runEffects
+                                |> runEffects
+                                |> runFrontendMsg clientId (GotCurrentTime startTime)
+                                |> runEffects
+                                |> runFrontendMsg clientId PressedCreateQnaSession
+                                |> runEffects
+                                |> runEffects
+                                |> runEffects
+                                |> runFrontendMsg clientId PressedCopyUrl
+                                |> runEffects
+                                |> runEffects
+                                |> (\state2 ->
+                                        let
+                                            clipboard =
+                                                Dict.get clientId state2.frontends
+                                                    |> Maybe.map .clipboard
+                                        in
+                                        case Maybe.andThen Url.fromString clipboard of
+                                            Nothing ->
+                                                "Clipboard text was not a url. "
+                                                    ++ Debug.toString clipboard
+                                                    |> Expect.fail
+
+                                            Just url ->
+                                                connectFrontend url state2
+                                                    |> (\( state3, clientId2 ) ->
+                                                            runEffects state3
+                                                                |> runFrontendMsg clientId2 (GotCurrentTime startTime)
+                                                                |> runEffects
+                                                                |> runEffects
+                                                                |> runFrontendMsg clientId2 (TypedQuestion "Hi")
+                                                                |> runEffects
+                                                                |> runEffects
+                                                                |> runFrontendMsg clientId2 PressedCreateQuestion
+                                                                |> runEffects
+                                                                |> runEffects
+                                                                |> runEffects
+                                                       )
+                                                    |> (\state4 ->
+                                                            Dict.values state4.backend.qnaSessions
+                                                                |> List.map (\qnaSession -> qnaSession.questions)
+                                                                |> Expect.equal
+                                                                    [ Dict.fromList
+                                                                        [ ( QuestionId (UserId 1) 0
+                                                                          , { creationTime = startTime
+                                                                            , content = NonemptyString 'H' "i"
+                                                                            , isPinned = Nothing
+                                                                            , votes = Set.empty
+                                                                            }
+                                                                          )
+                                                                        ]
+                                                                    ]
+                                                       )
+                                   )
                        )
-                    |> always (Expect.fail "")
         ]
 
 
@@ -99,7 +155,12 @@ type alias State =
 
 
 type alias FrontendState =
-    { model : FrontendModel, sessionId : SessionId, pendingEffects : FrontendEffect, toFrontend : List ToFrontend }
+    { model : FrontendModel
+    , sessionId : SessionId
+    , pendingEffects : FrontendEffect
+    , toFrontend : List ToFrontend
+    , clipboard : String
+    }
 
 
 init : State
@@ -130,6 +191,7 @@ connectFrontend url state =
                 , sessionId = "sessionId " ++ String.fromInt (state.counter + 1)
                 , pendingEffects = effects
                 , toFrontend = []
+                , clipboard = ""
                 }
                 state.frontends
         , counter = state.counter + 2
@@ -138,16 +200,33 @@ connectFrontend url state =
     )
 
 
+runFrontendMsg : ClientId -> FrontendMsg -> State -> State
+runFrontendMsg clientId frontendMsg state =
+    { state
+        | frontends =
+            Dict.update
+                clientId
+                (Maybe.map
+                    (\frontend ->
+                        let
+                            ( model, effects ) =
+                                Frontend.update frontendMsg frontend.model
+                        in
+                        { frontend
+                            | model = model
+                            , pendingEffects = Batch_ [ frontend.pendingEffects, effects ]
+                        }
+                    )
+                )
+                state.frontends
+    }
+
+
 runEffects : State -> State
 runEffects state =
     let
         state2 =
-            runBackendEffects
-                state.pendingEffects
-                { state
-                    | pendingEffects = Batch []
-                    , frontends = Dict.map (\_ frontend -> { frontend | pendingEffects = Batch_ [] }) state.frontends
-                }
+            runBackendEffects state.pendingEffects (clearEffects state)
 
         state4 =
             Dict.foldl
@@ -158,7 +237,71 @@ runEffects state =
                 state.frontends
     in
     { state4
-        | pendingEffects = flattenBackendEffect state.pendingEffects |> Batch
+        | pendingEffects = flattenBackendEffect state4.pendingEffects |> Batch
+        , frontends =
+            Dict.map
+                (\_ frontend ->
+                    { frontend | pendingEffects = flattenFrontendEffect frontend.pendingEffects |> Batch_ }
+                )
+                state4.frontends
+    }
+        |> runNetwork
+
+
+runNetwork : State -> State
+runNetwork state =
+    let
+        ( backendModel, effects ) =
+            List.foldl
+                (\( sessionId, clientId, toBackendMsg ) ( model, effects2 ) ->
+                    let
+                        _ =
+                            Debug.log "updateFromFrontend" ( clientId, toBackendMsg )
+                    in
+                    Backend.updateFromFrontend sessionId clientId toBackendMsg model
+                        |> Tuple.mapSecond (\a -> Batch [ effects2, a ])
+                )
+                ( state.backend, state.pendingEffects )
+                state.toBackend
+
+        frontends =
+            Dict.map
+                (\clientId frontend ->
+                    let
+                        ( newModel, newEffects2 ) =
+                            List.foldl
+                                (\msg ( model, newEffects ) ->
+                                    let
+                                        _ =
+                                            Debug.log "Frontend.updateFromBackend" ( clientId, msg )
+                                    in
+                                    Frontend.updateFromBackend msg model
+                                        |> Tuple.mapSecond (\a -> Batch_ [ newEffects, a ])
+                                )
+                                ( frontend.model, frontend.pendingEffects )
+                                frontend.toFrontend
+                    in
+                    { frontend
+                        | model = newModel
+                        , pendingEffects = Batch_ [ frontend.pendingEffects, newEffects2 ]
+                        , toFrontend = []
+                    }
+                )
+                state.frontends
+    in
+    { state
+        | toBackend = []
+        , backend = backendModel
+        , pendingEffects = flattenBackendEffect effects |> Batch
+        , frontends = frontends
+    }
+
+
+clearEffects : State -> State
+clearEffects state =
+    { state
+        | pendingEffects = Batch []
+        , frontends = Dict.map (\_ frontend -> { frontend | pendingEffects = Batch_ [] }) state.frontends
     }
 
 
@@ -183,8 +326,11 @@ runFrontendEffects sessionId clientId effect state =
         FileDownload _ _ _ ->
             state
 
-        CopyToClipboard _ ->
-            state
+        CopyToClipboard text ->
+            { state
+                | frontends =
+                    Dict.update clientId (Maybe.map (\frontend -> { frontend | clipboard = text })) state.frontends
+            }
 
         ScrollToBottom _ ->
             state
@@ -211,9 +357,15 @@ handleUrlChange urlText clientId state =
                         ( model, effects ) =
                             Frontend.update (UrlChanged url) frontend.model
                     in
-                    ( { state | frontends = Dict.insert clientId { frontend | model = model } state.frontends }
-                    , effects
-                    )
+                    { state
+                        | frontends =
+                            Dict.insert clientId
+                                { frontend
+                                    | model = model
+                                    , pendingEffects = Batch_ [ frontend.pendingEffects, effects ]
+                                }
+                                state.frontends
+                    }
 
                 Nothing ->
                     state

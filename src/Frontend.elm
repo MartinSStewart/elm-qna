@@ -167,6 +167,10 @@ urlEncoder (CryptographicKey qnaSessionId) =
 
 update : FrontendMsg -> FrontendModel -> ( FrontendModel, FrontendEffect )
 update msg model =
+    let
+        _ =
+            Debug.log "Frontend.update" msg
+    in
     case msg of
         UrlClicked urlRequest ->
             case urlRequest of
@@ -206,7 +210,7 @@ update msg model =
         PressedCreateQnaSession ->
             let
                 name =
-                    NonemptyString 'T' "est"
+                    NonemptyString 'T' "est" |> Debug.log ""
             in
             ( { model | remoteData = CreatingQnaSession name }, SendToBackend (CreateQnaSession name) )
 

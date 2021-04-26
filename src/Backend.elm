@@ -1,4 +1,4 @@
-module Backend exposing (app, init, update, updateFromFrontendWithTime)
+module Backend exposing (app, init, update, updateFromFrontend, updateFromFrontendWithTime)
 
 import AssocList as Dict
 import Duration
