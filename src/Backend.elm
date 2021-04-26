@@ -61,15 +61,16 @@ update msg model =
             )
 
         CheckSessions currentTime ->
-            ( { model
-                | qnaSessions =
-                    Dict.filter
-                        (\_ qnaSession ->
-                            Duration.from (QnaSession.lastActivity qnaSession) currentTime
-                                |> Quantity.lessThan (Duration.days 14)
-                        )
-                        model.qnaSessions
-              }
+            --( { model
+            --    | qnaSessions =
+            --        Dict.filter
+            --            (\_ qnaSession ->
+            --                Duration.from (QnaSession.lastActivity qnaSession) currentTime
+            --                    |> Quantity.lessThan (Duration.days 14)
+            --            )
+            --            model.qnaSessions
+            --  }
+            ( model
             , Cmd.none
             )
 
