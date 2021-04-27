@@ -2,18 +2,20 @@ module Tests exposing (suite)
 
 import AssocList as Dict exposing (Dict)
 import Backend
-import Duration
+import Basics.Extra as Basics
+import Duration exposing (Duration)
 import Expect exposing (Expectation)
 import Frontend
 import Id exposing (UserId(..))
 import Lamdera exposing (ClientId, SessionId)
 import QnaSession
+import Quantity
 import Question exposing (QuestionId(..))
 import Set
 import String.Nonempty exposing (NonemptyString(..))
 import Test exposing (..)
 import Time
-import Types exposing (BackendEffect(..), BackendModel, BackendMsg(..), FrontendEffect(..), FrontendModel, FrontendMsg(..), Key(..), ToBackend(..), ToFrontend)
+import Types exposing (BackendEffect(..), BackendModel, BackendMsg(..), BackendSub(..), FrontendEffect(..), FrontendModel, FrontendMsg(..), FrontendSub(..), Key(..), ToBackend(..), ToFrontend)
 import Url exposing (Url)
 
 
@@ -71,22 +73,14 @@ suite =
         , test "Create question" <|
             \_ ->
                 init
-                    |> runEffects
-                    |> runEffects
+                    |> simulateTime Duration.second
                     |> connectFrontend (unsafeUrl "https://question-and-answer.app")
                     |> (\( state, clientId ) ->
-                            runEffects state
-                                |> runEffects
-                                |> runEffects
-                                |> runFrontendMsg clientId (GotCurrentTime startTime)
-                                |> runEffects
+                            simulateTime Duration.second state
                                 |> runFrontendMsg clientId PressedCreateQnaSession
-                                |> runEffects
-                                |> runEffects
-                                |> runEffects
+                                |> simulateTime Duration.second
                                 |> runFrontendMsg clientId PressedCopyUrl
-                                |> runEffects
-                                |> runEffects
+                                |> simulateTime Duration.second
                                 |> (\state2 ->
                                         let
                                             clipboard =
@@ -102,17 +96,11 @@ suite =
                                             Just url ->
                                                 connectFrontend url state2
                                                     |> (\( state3, clientId2 ) ->
-                                                            runEffects state3
-                                                                |> runFrontendMsg clientId2 (GotCurrentTime startTime)
-                                                                |> runEffects
-                                                                |> runEffects
+                                                            simulateTime Duration.second state3
                                                                 |> runFrontendMsg clientId2 (TypedQuestion "Hi")
-                                                                |> runEffects
-                                                                |> runEffects
+                                                                |> simulateTime Duration.second
                                                                 |> runFrontendMsg clientId2 PressedCreateQuestion
-                                                                |> runEffects
-                                                                |> runEffects
-                                                                |> runEffects
+                                                                |> simulateTime Duration.second
                                                        )
                                                     |> (\state4 ->
                                                             Dict.values state4.backend.qnaSessions
@@ -120,7 +108,7 @@ suite =
                                                                 |> Expect.equal
                                                                     [ Dict.fromList
                                                                         [ ( QuestionId (UserId 1) 0
-                                                                          , { creationTime = startTime
+                                                                          , { creationTime = Duration.addTo startTime (Duration.milliseconds 8033)
                                                                             , content = NonemptyString 'H' "i"
                                                                             , isPinned = Nothing
                                                                             , votes = Set.empty
@@ -149,8 +137,9 @@ type alias State =
     , pendingEffects : BackendEffect
     , frontends : Dict ClientId FrontendState
     , counter : Int
-    , time : Time.Posix
+    , elapsedTime : Duration
     , toBackend : List ( SessionId, ClientId, ToBackend )
+    , timers : Dict Duration { msg : Time.Posix -> BackendMsg, startTime : Time.Posix }
     }
 
 
@@ -160,18 +149,47 @@ type alias FrontendState =
     , pendingEffects : FrontendEffect
     , toFrontend : List ToFrontend
     , clipboard : String
+    , timers : Dict Duration { msg : Time.Posix -> FrontendMsg, startTime : Time.Posix }
     }
 
 
 init : State
 init =
-    { backend = Backend.init
+    let
+        backend =
+            Backend.init
+    in
+    { backend = backend
     , pendingEffects = Batch []
     , frontends = Dict.empty
     , counter = 0
-    , time = startTime
+    , elapsedTime = Quantity.zero
     , toBackend = []
+    , timers = getBackendTimers startTime (Backend.subscriptions backend)
     }
+
+
+getFrontendTimers : Time.Posix -> FrontendSub -> Dict Duration { msg : Time.Posix -> FrontendMsg, startTime : Time.Posix }
+getFrontendTimers currentTime frontendSub =
+    case frontendSub of
+        SubBatch_ batch ->
+            List.foldl (\sub dict -> Dict.union (getFrontendTimers currentTime sub) dict) Dict.empty batch
+
+        TimeEvery_ duration msg ->
+            Dict.singleton duration { msg = msg, startTime = currentTime }
+
+
+getBackendTimers : Time.Posix -> BackendSub -> Dict Duration { msg : Time.Posix -> BackendMsg, startTime : Time.Posix }
+getBackendTimers currentTime frontendSub =
+    case frontendSub of
+        SubBatch batch ->
+            List.foldl (\sub dict -> Dict.union (getBackendTimers currentTime sub) dict) Dict.empty batch
+
+        TimeEvery duration msg ->
+            Dict.singleton duration { msg = msg, startTime = currentTime }
+
+        _ ->
+            Dict.empty
 
 
 connectFrontend : Url -> State -> ( State, ClientId )
@@ -182,6 +200,9 @@ connectFrontend url state =
 
         ( frontend, effects ) =
             Frontend.init url FakeKey
+
+        subscriptions =
+            Frontend.subscriptions frontend
     in
     ( { state
         | frontends =
@@ -192,6 +213,9 @@ connectFrontend url state =
                 , pendingEffects = effects
                 , toFrontend = []
                 , clipboard = ""
+                , timers =
+                    getFrontendTimers (Duration.addTo startTime state.elapsedTime) subscriptions
+                        |> Debug.log "timers"
                 }
                 state.frontends
         , counter = state.counter + 2
@@ -220,6 +244,80 @@ runFrontendMsg clientId frontendMsg state =
                 )
                 state.frontends
     }
+
+
+animationFrame =
+    Duration.seconds (1 / 60)
+
+
+simulateStep : State -> State
+simulateStep state =
+    let
+        newTime =
+            Quantity.plus state.elapsedTime animationFrame
+
+        getCompletedTimers : Dict Duration { a | startTime : Time.Posix } -> List ( Duration, { a | startTime : Time.Posix } )
+        getCompletedTimers timers =
+            Dict.toList timers
+                |> List.filter
+                    (\( duration, value ) ->
+                        let
+                            offset : Duration
+                            offset =
+                                Duration.from startTime value.startTime
+
+                            timerLength : Float
+                            timerLength =
+                                Duration.inMilliseconds duration
+                        in
+                        Basics.fractionalModBy timerLength (state.elapsedTime |> Quantity.minus offset |> Duration.inMilliseconds)
+                            > Basics.fractionalModBy timerLength (newTime |> Quantity.minus offset |> Duration.inMilliseconds)
+                    )
+
+        ( newBackend, newBackendEffects ) =
+            getCompletedTimers state.timers
+                |> List.foldl
+                    (\( _, { msg } ) ( backend, effects ) ->
+                        Backend.update
+                            (msg (Duration.addTo startTime newTime))
+                            backend
+                            |> Tuple.mapSecond (\a -> Batch [ effects, a ])
+                    )
+                    ( state.backend, state.pendingEffects )
+    in
+    { state
+        | elapsedTime = newTime
+        , pendingEffects = newBackendEffects
+        , backend = newBackend
+        , frontends =
+            Dict.map
+                (\_ frontend ->
+                    let
+                        ( newFrontendModel, newFrontendEffects ) =
+                            getCompletedTimers frontend.timers
+                                |> List.foldl
+                                    (\( _, { msg } ) ( frontendModel, effects ) ->
+                                        Frontend.update
+                                            (msg (Duration.addTo startTime newTime))
+                                            frontendModel
+                                            |> Tuple.mapSecond (\a -> Batch_ [ effects, a ])
+                                    )
+                                    ( frontend.model, frontend.pendingEffects )
+                    in
+                    { frontend | pendingEffects = newFrontendEffects, model = newFrontendModel }
+                )
+                state.frontends
+    }
+        |> runEffects
+
+
+simulateTime : Duration -> State -> State
+simulateTime duration state =
+    if duration |> Quantity.lessThan Quantity.zero then
+        state
+
+    else
+        simulateStep state |> simulateTime (duration |> Quantity.minus animationFrame)
 
 
 runEffects : State -> State
@@ -412,6 +510,6 @@ runBackendEffects effect state =
         TimeNow msg ->
             let
                 ( model, effects ) =
-                    Backend.update (msg state.time) state.backend
+                    Backend.update (msg (Duration.addTo startTime state.elapsedTime)) state.backend
             in
             { state | backend = model, pendingEffects = Batch [ state.pendingEffects, effects ] }

@@ -3,6 +3,7 @@ module Types exposing (..)
 import AssocList as Dict exposing (Dict)
 import Browser exposing (UrlRequest)
 import Browser.Navigation
+import Duration exposing (Duration)
 import Id exposing (CryptographicKey, HostSecret, QnaSessionId, UserId(..))
 import Lamdera exposing (ClientId, SessionId)
 import Network exposing (ChangeId, NetworkModel)
@@ -161,3 +162,14 @@ type FrontendEffect
     | CopyToClipboard String
     | ScrollToBottom String
     | Blur String
+
+
+type BackendSub
+    = SubBatch (List BackendSub)
+    | TimeEvery Duration (Time.Posix -> BackendMsg)
+    | ClientDisconnected (SessionId -> ClientId -> BackendMsg)
+
+
+type FrontendSub
+    = SubBatch_ (List FrontendSub)
+    | TimeEvery_ Duration (Time.Posix -> FrontendMsg)

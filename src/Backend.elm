@@ -1,4 +1,4 @@
-module Backend exposing (app, init, update, updateFromFrontend, updateFromFrontendWithTime)
+module Backend exposing (app, init, subscriptions, update, updateFromFrontend, updateFromFrontendWithTime)
 
 import AssocList as Dict
 import Duration
@@ -23,7 +23,7 @@ app =
         , updateFromFrontend =
             \sessionId clientId msg model ->
                 updateFromFrontend sessionId clientId msg model |> Tuple.mapSecond effectToCmd
-        , subscriptions = subscriptions
+        , subscriptions = subscriptions >> backendSubToSub
         }
 
 
@@ -40,11 +40,24 @@ effectToCmd effect =
             Task.perform msg Time.now
 
 
-subscriptions : BackendModel -> Sub BackendMsg
+backendSubToSub : BackendSub -> Sub BackendMsg
+backendSubToSub backendSub =
+    case backendSub of
+        SubBatch backendSubs ->
+            List.map backendSubToSub backendSubs |> Sub.batch
+
+        TimeEvery duration msg ->
+            Time.every (Duration.inMilliseconds duration) msg
+
+        ClientDisconnected msg ->
+            Lamdera.onDisconnect msg
+
+
+subscriptions : BackendModel -> BackendSub
 subscriptions _ =
-    Sub.batch
-        [ Lamdera.onDisconnect UserDisconnected
-        , Time.every (24 * 60 * 60 * 1000) CheckSessions
+    SubBatch
+        [ ClientDisconnected UserDisconnected
+        , TimeEvery Duration.day CheckSessions
         ]
 
 

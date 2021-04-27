@@ -1,4 +1,4 @@
-port module Frontend exposing (app, domain, init, update, updateFromBackend, view)
+port module Frontend exposing (app, domain, init, subscriptions, update, updateFromBackend, view)
 
 import AssocList as Dict exposing (Dict)
 import Browser exposing (UrlRequest(..))
@@ -29,20 +29,7 @@ import Simple.Animation.Property as Property
 import String.Nonempty as NonemptyString exposing (NonemptyString(..))
 import Task exposing (Task)
 import Time
-import Types
-    exposing
-        ( ConfirmLocalQnaMsg(..)
-        , FrontendEffect(..)
-        , FrontendModel
-        , FrontendMsg(..)
-        , FrontendStatus(..)
-        , InQnaSession_
-        , Key(..)
-        , LocalQnaMsg(..)
-        , ServerQnaMsg(..)
-        , ToBackend(..)
-        , ToFrontend(..)
-        )
+import Types exposing (ConfirmLocalQnaMsg(..), FrontendEffect(..), FrontendModel, FrontendMsg(..), FrontendStatus(..), FrontendSub(..), InQnaSession_, Key(..), LocalQnaMsg(..), ServerQnaMsg(..), ToBackend(..), ToFrontend(..))
 import Url exposing (Url)
 import Url.Parser exposing ((</>))
 
@@ -57,14 +44,27 @@ app =
         , onUrlChange = UrlChanged
         , update = \msg model -> update msg model |> Tuple.mapSecond effectToCmd
         , updateFromBackend = \msg model -> updateFromBackend msg model |> Tuple.mapSecond effectToCmd
-        , subscriptions =
-            \_ ->
-                Sub.batch
-                    [ Time.every 1000 GotCurrentTime
-                    , Time.every 10000 CheckIfConnected
-                    ]
+        , subscriptions = subscriptions >> frontendSubToSub
         , view = view
         }
+
+
+subscriptions : FrontendModel -> FrontendSub
+subscriptions _ =
+    SubBatch_
+        [ TimeEvery_ Duration.second GotCurrentTime
+        , TimeEvery_ (Duration.seconds 10) CheckIfConnected
+        ]
+
+
+frontendSubToSub : FrontendSub -> Sub FrontendMsg
+frontendSubToSub sub =
+    case sub of
+        SubBatch_ frontendSubs ->
+            List.map frontendSubToSub frontendSubs |> Sub.batch
+
+        TimeEvery_ duration msg ->
+            Time.every (Duration.inMilliseconds duration) msg
 
 
 effectToCmd : FrontendEffect -> Cmd FrontendMsg
