@@ -8,6 +8,7 @@ import Expect exposing (Expectation)
 import Frontend
 import Id exposing (UserId(..))
 import Lamdera exposing (ClientId, SessionId)
+import Network
 import QnaSession
 import Quantity
 import Question exposing (QuestionId(..))
@@ -70,7 +71,7 @@ suite =
                     (NonemptyString 'T' "est")
                     |> QnaSession.lastActivity
                     |> Expect.equal startTime
-        , test "Create question" <|
+        , test "Create question in Q&A and then delete the session after 2 weeks" <|
             \_ ->
                 init
                     |> simulateTime Duration.second
@@ -102,13 +103,13 @@ suite =
                                                                 |> runFrontendMsg clientId2 PressedCreateQuestion
                                                                 |> simulateTime Duration.second
                                                        )
-                                                    |> (\state4 ->
-                                                            Dict.values state4.backend.qnaSessions
-                                                                |> List.map (\qnaSession -> qnaSession.questions)
-                                                                |> Expect.equal
+                                                    |> checkState
+                                                        (\state3 ->
+                                                            let
+                                                                expected =
                                                                     [ Dict.fromList
                                                                         [ ( QuestionId (UserId 1) 0
-                                                                          , { creationTime = Duration.addTo startTime (Duration.milliseconds 8033)
+                                                                          , { creationTime = Duration.addTo startTime (Duration.milliseconds 6033)
                                                                             , content = NonemptyString 'H' "i"
                                                                             , isPinned = Nothing
                                                                             , votes = Set.empty
@@ -116,6 +117,115 @@ suite =
                                                                           )
                                                                         ]
                                                                     ]
+
+                                                                actual =
+                                                                    Dict.values state3.backend.qnaSessions
+                                                                        |> List.map (\qnaSession -> qnaSession.questions)
+                                                            in
+                                                            if actual /= expected then
+                                                                "QnA with question is missing. Instead got: "
+                                                                    ++ Debug.toString actual
+                                                                    |> Just
+
+                                                            else
+                                                                Nothing
+                                                        )
+                                                    |> fastForward (Duration.days 13)
+                                                    |> simulateTime Duration.hour
+                                                    |> checkState
+                                                        (\state3 ->
+                                                            if Dict.size state3.backend.qnaSessions == 1 then
+                                                                Nothing
+
+                                                            else
+                                                                Just "QnA session was removed too early"
+                                                        )
+                                                    |> fastForward (Duration.days 1)
+                                                    |> simulateTime Duration.hour
+                                                    |> checkState
+                                                        (\state3 ->
+                                                            if Dict.size state3.backend.qnaSessions == 0 then
+                                                                Nothing
+
+                                                            else
+                                                                Just "QnA session was not removed"
+                                                        )
+                                                    |> finishSimulation
+                                   )
+                       )
+        , test "Handle disconnect and reconnect" <|
+            \_ ->
+                let
+                    check clientId state6 =
+                        case Dict.get clientId state6.frontends of
+                            Just frontend ->
+                                case frontend.model.remoteData of
+                                    Types.InQnaSession qnaSession ->
+                                        Network.localState
+                                            Frontend.qnaSessionUpdate
+                                            qnaSession.networkModel
+                                            |> .questions
+                                            |> Dict.values
+                                            |> (\questions ->
+                                                    case questions of
+                                                        [ question ] ->
+                                                            if question.otherVotes == 1 then
+                                                                Nothing
+
+                                                            else
+                                                                Just "Didn't get question vote"
+
+                                                        _ ->
+                                                            Just "Wrong number of questions"
+                                               )
+
+                                    _ ->
+                                        Just "Wrong state"
+
+                            Nothing ->
+                                Just "ClientId not found"
+                in
+                init
+                    |> simulateTime Duration.second
+                    |> connectFrontend (unsafeUrl "https://question-and-answer.app")
+                    |> (\( state, clientId ) ->
+                            simulateTime Duration.second state
+                                |> runFrontendMsg clientId PressedCreateQnaSession
+                                |> simulateTime Duration.second
+                                |> runFrontendMsg clientId PressedCopyUrl
+                                |> simulateTime Duration.second
+                                |> (\state2 ->
+                                        let
+                                            clipboard =
+                                                Dict.get clientId state2.frontends
+                                                    |> Maybe.map .clipboard
+                                        in
+                                        case Maybe.andThen Url.fromString clipboard of
+                                            Nothing ->
+                                                "Clipboard text was not a url. "
+                                                    ++ Debug.toString clipboard
+                                                    |> Expect.fail
+
+                                            Just url ->
+                                                connectFrontend url state2
+                                                    |> (\( state3, clientId2 ) ->
+                                                            simulateTime Duration.second state3
+                                                                |> runFrontendMsg clientId2 (TypedQuestion "Hi")
+                                                                |> simulateTime Duration.second
+                                                                |> disconnectFrontend clientId2
+                                                                |> (\( state4, disconnectedFrontend ) ->
+                                                                        simulateTime Duration.second state4
+                                                                            |> reconnectFrontend disconnectedFrontend
+                                                                            |> (\( state5, clientId3 ) ->
+                                                                                    simulateTime Duration.second state5
+                                                                                        |> runFrontendMsg clientId3 PressedCreateQuestion
+                                                                                        |> simulateTime Duration.second
+                                                                                        |> runFrontendMsg clientId (PressedToggleUpvote (QuestionId (UserId 1) 0))
+                                                                                        |> simulateTime Duration.second
+                                                                                        |> checkState (check clientId3)
+                                                                                        |> finishSimulation
+                                                                               )
+                                                                   )
                                                        )
                                    )
                        )
@@ -140,7 +250,27 @@ type alias State =
     , elapsedTime : Duration
     , toBackend : List ( SessionId, ClientId, ToBackend )
     , timers : Dict Duration { msg : Time.Posix -> BackendMsg, startTime : Time.Posix }
+    , testErrors : List String
     }
+
+
+checkState : (State -> Maybe String) -> State -> State
+checkState checkFunc state =
+    case checkFunc state of
+        Just error ->
+            { state | testErrors = state.testErrors ++ [ error ] }
+
+        Nothing ->
+            state
+
+
+finishSimulation : State -> Expectation
+finishSimulation state =
+    if List.isEmpty state.testErrors then
+        Expect.pass
+
+    else
+        Expect.fail <| String.join "," state.testErrors
 
 
 type alias FrontendState =
@@ -166,6 +296,7 @@ init =
     , elapsedTime = Quantity.zero
     , toBackend = []
     , timers = getBackendTimers startTime (Backend.subscriptions backend)
+    , testErrors = []
     }
 
 
@@ -180,8 +311,8 @@ getFrontendTimers currentTime frontendSub =
 
 
 getBackendTimers : Time.Posix -> BackendSub -> Dict Duration { msg : Time.Posix -> BackendMsg, startTime : Time.Posix }
-getBackendTimers currentTime frontendSub =
-    case frontendSub of
+getBackendTimers currentTime backendSub =
+    case backendSub of
         SubBatch batch ->
             List.foldl (\sub dict -> Dict.union (getBackendTimers currentTime sub) dict) Dict.empty batch
 
@@ -190,6 +321,19 @@ getBackendTimers currentTime frontendSub =
 
         _ ->
             Dict.empty
+
+
+getClientDisconnectSubs : BackendSub -> List (SessionId -> ClientId -> BackendMsg)
+getClientDisconnectSubs backendSub =
+    case backendSub of
+        SubBatch batch ->
+            List.foldl (\sub list -> getClientDisconnectSubs sub ++ list) [] batch
+
+        ClientDisconnected msg ->
+            [ msg ]
+
+        _ ->
+            []
 
 
 connectFrontend : Url -> State -> ( State, ClientId )
@@ -213,9 +357,7 @@ connectFrontend url state =
                 , pendingEffects = effects
                 , toFrontend = []
                 , clipboard = ""
-                , timers =
-                    getFrontendTimers (Duration.addTo startTime state.elapsedTime) subscriptions
-                        |> Debug.log "timers"
+                , timers = getFrontendTimers (Duration.addTo startTime state.elapsedTime) subscriptions
                 }
                 state.frontends
         , counter = state.counter + 2
@@ -224,8 +366,51 @@ connectFrontend url state =
     )
 
 
+disconnectFrontend : ClientId -> State -> ( State, FrontendState )
+disconnectFrontend clientId state =
+    case Dict.get clientId state.frontends of
+        Just frontend ->
+            let
+                ( backend, effects ) =
+                    getClientDisconnectSubs (Backend.subscriptions state.backend)
+                        |> List.foldl
+                            (\msg ( newBackend, newEffects ) ->
+                                Backend.update (msg frontend.sessionId clientId) newBackend
+                                    |> Tuple.mapSecond (\a -> Batch [ newEffects, a ])
+                            )
+                            ( state.backend, state.pendingEffects )
+            in
+            ( { state | backend = backend, pendingEffects = effects }, { frontend | toFrontend = [] } )
+
+        Nothing ->
+            Debug.todo "Invalid clientId"
+
+
+reconnectFrontend : FrontendState -> State -> ( State, ClientId )
+reconnectFrontend frontendState state =
+    let
+        clientId =
+            "clientId " ++ String.fromInt state.counter
+    in
+    ( { state
+        | frontends =
+            Dict.insert clientId frontendState state.frontends
+        , counter = state.counter + 1
+      }
+    , clientId
+    )
+
+
 runFrontendMsg : ClientId -> FrontendMsg -> State -> State
 runFrontendMsg clientId frontendMsg state =
+    let
+        _ =
+            if Dict.member clientId state.frontends then
+                ()
+
+            else
+                Debug.todo "clientId not found in runFrontendMsg"
+    in
     { state
         | frontends =
             Dict.update
@@ -317,7 +502,12 @@ simulateTime duration state =
         state
 
     else
-        simulateStep state |> simulateTime (duration |> Quantity.minus animationFrame)
+        simulateTime (duration |> Quantity.minus animationFrame) (simulateStep state)
+
+
+fastForward : Duration -> State -> State
+fastForward duration state =
+    { state | elapsedTime = Quantity.plus state.elapsedTime duration }
 
 
 runEffects : State -> State
@@ -352,10 +542,10 @@ runNetwork state =
         ( backendModel, effects ) =
             List.foldl
                 (\( sessionId, clientId, toBackendMsg ) ( model, effects2 ) ->
-                    let
-                        _ =
-                            Debug.log "updateFromFrontend" ( clientId, toBackendMsg )
-                    in
+                    --let
+                    --    _ =
+                    --        Debug.log "updateFromFrontend" ( clientId, toBackendMsg )
+                    --in
                     Backend.updateFromFrontend sessionId clientId toBackendMsg model
                         |> Tuple.mapSecond (\a -> Batch [ effects2, a ])
                 )
@@ -369,10 +559,10 @@ runNetwork state =
                         ( newModel, newEffects2 ) =
                             List.foldl
                                 (\msg ( model, newEffects ) ->
-                                    let
-                                        _ =
-                                            Debug.log "Frontend.updateFromBackend" ( clientId, msg )
-                                    in
+                                    --let
+                                    --    _ =
+                                    --        Debug.log "Frontend.updateFromBackend" ( clientId, msg )
+                                    --in
                                     Frontend.updateFromBackend msg model
                                         |> Tuple.mapSecond (\a -> Batch_ [ newEffects, a ])
                                 )

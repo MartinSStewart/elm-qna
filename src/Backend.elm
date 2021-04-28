@@ -57,7 +57,7 @@ subscriptions : BackendModel -> BackendSub
 subscriptions _ =
     SubBatch
         [ ClientDisconnected UserDisconnected
-        , TimeEvery Duration.day CheckSessions
+        , TimeEvery Duration.hour CheckSessions
         ]
 
 

@@ -1,4 +1,4 @@
-port module Frontend exposing (app, domain, init, subscriptions, update, updateFromBackend, view)
+port module Frontend exposing (app, domain, init, qnaSessionUpdate, subscriptions, update, updateFromBackend, view)
 
 import AssocList as Dict exposing (Dict)
 import Browser exposing (UrlRequest(..))
@@ -167,10 +167,6 @@ urlEncoder (CryptographicKey qnaSessionId) =
 
 update : FrontendMsg -> FrontendModel -> ( FrontendModel, FrontendEffect )
 update msg model =
-    let
-        _ =
-            Debug.log "Frontend.update" msg
-    in
     case msg of
         UrlClicked urlRequest ->
             case urlRequest of
