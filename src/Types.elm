@@ -161,6 +161,7 @@ type FrontendEffect
     | PushUrl Key String
     | ReplaceUrl Key String
     | LoadUrl String
+    | ReloadUrl
     | FileDownload String String String
     | CopyToClipboard String
     | ScrollToBottom String

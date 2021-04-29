@@ -95,6 +95,9 @@ effectToCmd effect =
         LoadUrl url ->
             Browser.Navigation.load url
 
+        ReloadUrl ->
+            Browser.Navigation.reload
+
         FileDownload name mime content ->
             File.Download.string name mime content
 
@@ -713,24 +716,25 @@ updateFromBackend msg model =
 
         NewConnection ->
             if model.gotFirstConnectMsg then
-                case model.remoteData of
-                    Homepage ->
-                        homepageRouteInit True model.key
-
-                    LoadingQnaSession qnaSessionId ->
-                        qnaSessionRouteInit True model.key qnaSessionId
-
-                    LoadingQnaSessionWithHostInvite hostSecret ->
-                        hostInviteRouteInit True model.key hostSecret
-
-                    CreatingQnaSession _ ->
-                        homepageRouteInit True model.key
-
-                    LoadingQnaSessionFailed () ->
-                        homepageRouteInit True model.key
-
-                    InQnaSession inQnaSession_ ->
-                        qnaSessionRouteInit True model.key inQnaSession_.qnaSessionId
+                ( model, ReloadUrl )
+                --case model.remoteData of
+                --    Homepage ->
+                --        homepageRouteInit True model.key
+                --
+                --    LoadingQnaSession qnaSessionId ->
+                --        qnaSessionRouteInit True model.key qnaSessionId
+                --
+                --    LoadingQnaSessionWithHostInvite hostSecret ->
+                --        hostInviteRouteInit True model.key hostSecret
+                --
+                --    CreatingQnaSession _ ->
+                --        homepageRouteInit True model.key
+                --
+                --    LoadingQnaSessionFailed () ->
+                --        homepageRouteInit True model.key
+                --
+                --    InQnaSession inQnaSession_ ->
+                --        qnaSessionRouteInit True model.key inQnaSession_.qnaSessionId
 
             else
                 ( { model | gotFirstConnectMsg = True }, Batch_ [] )
