@@ -336,6 +336,19 @@ getClientDisconnectSubs backendSub =
             []
 
 
+getClientConnectSubs : BackendSub -> List (SessionId -> ClientId -> BackendMsg)
+getClientConnectSubs backendSub =
+    case backendSub of
+        SubBatch batch ->
+            List.foldl (\sub list -> getClientDisconnectSubs sub ++ list) [] batch
+
+        ClientConnected msg ->
+            [ msg ]
+
+        _ ->
+            []
+
+
 connectFrontend : Url -> State -> ( State, ClientId )
 connectFrontend url state =
     let
@@ -391,10 +404,20 @@ reconnectFrontend frontendState state =
     let
         clientId =
             "clientId " ++ String.fromInt state.counter
+
+        ( backend, effects ) =
+            getClientConnectSubs (Backend.subscriptions state.backend)
+                |> List.foldl
+                    (\msg ( newBackend, newEffects ) ->
+                        Backend.update (msg frontendState.sessionId clientId) newBackend
+                            |> Tuple.mapSecond (\a -> Batch [ newEffects, a ])
+                    )
+                    ( state.backend, state.pendingEffects )
     in
     ( { state
-        | frontends =
-            Dict.insert clientId frontendState state.frontends
+        | frontends = Dict.insert clientId frontendState state.frontends
+        , backend = backend
+        , pendingEffects = effects
         , counter = state.counter + 1
       }
     , clientId

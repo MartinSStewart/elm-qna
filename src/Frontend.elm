@@ -117,32 +117,51 @@ init : Url.Url -> Key -> ( FrontendModel, FrontendEffect )
 init url key =
     case Url.Parser.parse urlDecoder url of
         Just (QnaSessionRoute qnaSessionId) ->
-            ( { key = key
-              , remoteData = LoadingQnaSession qnaSessionId
-              , currentTime = Nothing
-              , lastConnectionCheck = Nothing
-              }
-            , SendToBackend (GetQnaSession qnaSessionId)
-            )
+            qnaSessionRouteInit False key qnaSessionId
 
         Just (HostInviteRoute hostSecret) ->
-            ( { key = key
-              , remoteData = LoadingQnaSessionWithHostInvite hostSecret
-              , currentTime = Nothing
-              , lastConnectionCheck = Nothing
-              }
-            , SendToBackend (GetQnaSessionWithHostInvite hostSecret)
-            )
+            hostInviteRouteInit False key hostSecret
 
         Just HomepageRoute ->
-            ( { key = key, remoteData = Homepage, currentTime = Nothing, lastConnectionCheck = Nothing }
-            , Batch_ []
-            )
+            homepageRouteInit False key
 
         Nothing ->
-            ( { key = key, remoteData = Homepage, currentTime = Nothing, lastConnectionCheck = Nothing }
-            , Batch_ []
-            )
+            homepageRouteInit False key
+
+
+qnaSessionRouteInit : Bool -> Key -> CryptographicKey QnaSessionId -> ( FrontendModel, FrontendEffect )
+qnaSessionRouteInit gotFirstConnectMsg key qnaSessionId =
+    ( { key = key
+      , remoteData = LoadingQnaSession qnaSessionId
+      , currentTime = Nothing
+      , lastConnectionCheck = Nothing
+      , gotFirstConnectMsg = gotFirstConnectMsg
+      }
+    , SendToBackend (GetQnaSession qnaSessionId)
+    )
+
+
+hostInviteRouteInit : Bool -> Key -> CryptographicKey HostSecret -> ( FrontendModel, FrontendEffect )
+hostInviteRouteInit gotFirstConnectMsg key hostSecret =
+    ( { key = key
+      , remoteData = LoadingQnaSessionWithHostInvite hostSecret
+      , currentTime = Nothing
+      , lastConnectionCheck = Nothing
+      , gotFirstConnectMsg = gotFirstConnectMsg
+      }
+    , SendToBackend (GetQnaSessionWithHostInvite hostSecret)
+    )
+
+
+homepageRouteInit gotFirstConnectMsg key =
+    ( { key = key
+      , remoteData = Homepage
+      , currentTime = Nothing
+      , lastConnectionCheck = Nothing
+      , gotFirstConnectMsg = gotFirstConnectMsg
+      }
+    , Batch_ []
+    )
 
 
 type Route
@@ -691,6 +710,30 @@ updateFromBackend msg model =
             ( { model | lastConnectionCheck = model.currentTime }
             , Batch_ []
             )
+
+        NewConnection ->
+            if model.gotFirstConnectMsg then
+                case model.remoteData of
+                    Homepage ->
+                        homepageRouteInit True model.key
+
+                    LoadingQnaSession qnaSessionId ->
+                        qnaSessionRouteInit True model.key qnaSessionId
+
+                    LoadingQnaSessionWithHostInvite hostSecret ->
+                        hostInviteRouteInit True model.key hostSecret
+
+                    CreatingQnaSession _ ->
+                        homepageRouteInit True model.key
+
+                    LoadingQnaSessionFailed () ->
+                        homepageRouteInit True model.key
+
+                    InQnaSession inQnaSession_ ->
+                        qnaSessionRouteInit True model.key inQnaSession_.qnaSessionId
+
+            else
+                ( { model | gotFirstConnectMsg = True }, Batch_ [] )
 
 
 view : FrontendModel -> { title : String, body : List (Html FrontendMsg) }

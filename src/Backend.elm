@@ -52,11 +52,15 @@ backendSubToSub backendSub =
         ClientDisconnected msg ->
             Lamdera.onDisconnect msg
 
+        ClientConnected msg ->
+            Lamdera.onConnect msg
+
 
 subscriptions : BackendModel -> BackendSub
 subscriptions _ =
     SubBatch
         [ ClientDisconnected UserDisconnected
+        , ClientConnected UserConnected
         , TimeEvery Duration.hour CheckSessions
         ]
 
@@ -86,6 +90,9 @@ update msg model =
               }
             , Batch []
             )
+
+        UserConnected _ clientId ->
+            ( model, SendToFrontend clientId NewConnection )
 
         CheckSessions currentTime ->
             --( { model

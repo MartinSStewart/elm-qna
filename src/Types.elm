@@ -19,6 +19,7 @@ type alias FrontendModel =
     , remoteData : FrontendStatus
     , currentTime : Maybe Time.Posix
     , lastConnectionCheck : Maybe Time.Posix
+    , gotFirstConnectMsg : Bool
     }
 
 
@@ -127,6 +128,7 @@ type BackendMsg
     = NoOpBackendMsg
     | ToBackendWithTime SessionId ClientId ToBackend Time.Posix
     | UserDisconnected SessionId ClientId
+    | UserConnected SessionId ClientId
     | CheckSessions Time.Posix
 
 
@@ -144,6 +146,7 @@ type ToFrontend
     | GetQnaSessionWithHostInviteResponse (CryptographicKey HostSecret) (Result () ( CryptographicKey QnaSessionId, QnaSession ))
     | CreateQnaSessionResponse (CryptographicKey QnaSessionId) (CryptographicKey HostSecret)
     | CheckIfConnectedResponse
+    | NewConnection
 
 
 type BackendEffect
@@ -168,6 +171,7 @@ type BackendSub
     = SubBatch (List BackendSub)
     | TimeEvery Duration (Time.Posix -> BackendMsg)
     | ClientDisconnected (SessionId -> ClientId -> BackendMsg)
+    | ClientConnected (SessionId -> ClientId -> BackendMsg)
 
 
 type FrontendSub
