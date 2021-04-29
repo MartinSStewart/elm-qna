@@ -226,10 +226,6 @@ update msg model =
             ( model, Batch_ [] )
 
         PressedCreateQnaSession ->
-            let
-                name =
-                    NonemptyString 'T' "est" |> Debug.log ""
-            in
             ( { model | remoteData = CreatingQnaSession name }, SendToBackend (CreateQnaSession name) )
 
         TypedQuestion text ->
