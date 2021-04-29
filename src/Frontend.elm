@@ -716,25 +716,24 @@ updateFromBackend msg model =
 
         NewConnection ->
             if model.gotFirstConnectMsg then
-                ( model, ReloadUrl )
-                --case model.remoteData of
-                --    Homepage ->
-                --        homepageRouteInit True model.key
-                --
-                --    LoadingQnaSession qnaSessionId ->
-                --        qnaSessionRouteInit True model.key qnaSessionId
-                --
-                --    LoadingQnaSessionWithHostInvite hostSecret ->
-                --        hostInviteRouteInit True model.key hostSecret
-                --
-                --    CreatingQnaSession _ ->
-                --        homepageRouteInit True model.key
-                --
-                --    LoadingQnaSessionFailed () ->
-                --        homepageRouteInit True model.key
-                --
-                --    InQnaSession inQnaSession_ ->
-                --        qnaSessionRouteInit True model.key inQnaSession_.qnaSessionId
+                case model.remoteData of
+                    Homepage ->
+                        homepageRouteInit True model.key
+
+                    LoadingQnaSession qnaSessionId ->
+                        qnaSessionRouteInit True model.key qnaSessionId
+
+                    LoadingQnaSessionWithHostInvite hostSecret ->
+                        hostInviteRouteInit True model.key hostSecret
+
+                    CreatingQnaSession _ ->
+                        homepageRouteInit True model.key
+
+                    LoadingQnaSessionFailed () ->
+                        homepageRouteInit True model.key
+
+                    InQnaSession inQnaSession_ ->
+                        qnaSessionRouteInit True model.key inQnaSession_.qnaSessionId
 
             else
                 ( { model | gotFirstConnectMsg = True }, Batch_ [] )
