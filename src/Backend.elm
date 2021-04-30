@@ -72,6 +72,10 @@ init =
 
 update : BackendMsg -> BackendModel -> ( BackendModel, BackendEffect )
 update msg model =
+    let
+        _ =
+            Debug.log "Backendupdate" msg
+    in
     case msg of
         NoOpBackendMsg ->
             ( model, Batch [] )
@@ -95,16 +99,15 @@ update msg model =
             ( model, SendToFrontend clientId NewConnection )
 
         CheckSessions currentTime ->
-            --( { model
-            --    | qnaSessions =
-            --        Dict.filter
-            --            (\_ qnaSession ->
-            --                Duration.from (QnaSession.lastActivity qnaSession) currentTime
-            --                    |> Quantity.lessThan (Duration.days 14)
-            --            )
-            --            model.qnaSessions
-            --  }
-            ( model
+            ( { model
+                | qnaSessions =
+                    Dict.filter
+                        (\_ qnaSession ->
+                            Duration.from (QnaSession.lastActivity qnaSession) currentTime
+                                |> Quantity.lessThan (Duration.days 14)
+                        )
+                        model.qnaSessions
+              }
             , Batch []
             )
 

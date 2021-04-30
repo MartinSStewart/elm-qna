@@ -95,9 +95,6 @@ effectToCmd effect =
         LoadUrl url ->
             Browser.Navigation.load url
 
-        ReloadUrl ->
-            Browser.Navigation.reload
-
         FileDownload name mime content ->
             File.Download.string name mime content
 

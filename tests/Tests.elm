@@ -153,82 +153,105 @@ suite =
                                                     |> finishSimulation
                                    )
                        )
-        , test "Handle disconnect and reconnect" <|
-            \_ ->
-                let
-                    check clientId state6 =
-                        case Dict.get clientId state6.frontends of
-                            Just frontend ->
-                                case frontend.model.remoteData of
-                                    Types.InQnaSession qnaSession ->
-                                        Network.localState
-                                            Frontend.qnaSessionUpdate
-                                            qnaSession.networkModel
-                                            |> .questions
-                                            |> Dict.values
-                                            |> (\questions ->
-                                                    case questions of
-                                                        [ question ] ->
-                                                            if question.otherVotes == 1 then
-                                                                Nothing
+        , only <|
+            test "Handle disconnect and reconnect" <|
+                \_ ->
+                    let
+                        check clientId state6 =
+                            case Dict.get clientId state6.frontends of
+                                Just frontend ->
+                                    case frontend.model.remoteData of
+                                        Types.InQnaSession qnaSession ->
+                                            Network.localState
+                                                Frontend.qnaSessionUpdate
+                                                qnaSession.networkModel
+                                                |> .questions
+                                                |> Dict.values
+                                                |> (\questions ->
+                                                        case Debug.log "questions" questions of
+                                                            [ question ] ->
+                                                                if question.otherVotes == 1 then
+                                                                    Nothing
 
-                                                            else
-                                                                Just "Didn't get question vote"
+                                                                else
+                                                                    Just "Didn't get question vote"
 
-                                                        _ ->
-                                                            Just "Wrong number of questions"
-                                               )
+                                                            _ ->
+                                                                Just "Wrong number of questions"
+                                                   )
 
-                                    _ ->
-                                        Just "Wrong state"
+                                        _ ->
+                                            Just "Wrong state"
 
-                            Nothing ->
-                                Just "ClientId not found"
-                in
-                init
-                    |> simulateTime Duration.second
-                    |> connectFrontend (unsafeUrl "https://question-and-answer.app")
-                    |> (\( state, clientId ) ->
-                            simulateTime Duration.second state
-                                |> runFrontendMsg clientId PressedCreateQnaSession
-                                |> simulateTime Duration.second
-                                |> runFrontendMsg clientId PressedCopyUrl
-                                |> simulateTime Duration.second
-                                |> (\state2 ->
-                                        let
-                                            clipboard =
-                                                Dict.get clientId state2.frontends
-                                                    |> Maybe.map .clipboard
-                                        in
-                                        case Maybe.andThen Url.fromString clipboard of
-                                            Nothing ->
-                                                "Clipboard text was not a url. "
-                                                    ++ Debug.toString clipboard
-                                                    |> Expect.fail
+                                Nothing ->
+                                    Just "ClientId not found"
+                    in
+                    init
+                        |> (\a ->
+                                let
+                                    _ =
+                                        Debug.log "a" ""
+                                in
+                                a
+                           )
+                        |> simulateTime Duration.second
+                        |> (\a ->
+                                let
+                                    _ =
+                                        Debug.log "b" ""
+                                in
+                                a
+                           )
+                        |> connectFrontend (unsafeUrl "https://question-and-answer.app")
+                        |> (\a ->
+                                let
+                                    _ =
+                                        Debug.log "c" ""
+                                in
+                                a
+                           )
+                        |> (\( state, clientId ) ->
+                                simulateTime Duration.second state
+                                    |> runFrontendMsg clientId PressedCreateQnaSession
+                                    |> simulateTime Duration.second
+                                    |> runFrontendMsg clientId PressedCopyUrl
+                                    |> simulateTime Duration.second
+                                    |> (\state2 ->
+                                            let
+                                                clipboard =
+                                                    Dict.get clientId state2.frontends
+                                                        |> Maybe.map .clipboard
+                                            in
+                                            case Maybe.andThen Url.fromString clipboard of
+                                                Nothing ->
+                                                    "Clipboard text was not a url. "
+                                                        ++ Debug.toString clipboard
+                                                        |> Expect.fail
 
-                                            Just url ->
-                                                connectFrontend url state2
-                                                    |> (\( state3, clientId2 ) ->
-                                                            simulateTime Duration.second state3
-                                                                |> runFrontendMsg clientId2 (TypedQuestion "Hi")
-                                                                |> simulateTime Duration.second
-                                                                |> disconnectFrontend clientId2
-                                                                |> (\( state4, disconnectedFrontend ) ->
-                                                                        simulateTime Duration.second state4
-                                                                            |> reconnectFrontend disconnectedFrontend
-                                                                            |> (\( state5, clientId3 ) ->
-                                                                                    simulateTime Duration.second state5
-                                                                                        |> runFrontendMsg clientId3 PressedCreateQuestion
-                                                                                        |> simulateTime Duration.second
-                                                                                        |> runFrontendMsg clientId (PressedToggleUpvote (QuestionId (UserId 1) 0))
-                                                                                        |> simulateTime Duration.second
-                                                                                        |> checkState (check clientId3)
-                                                                                        |> finishSimulation
-                                                                               )
-                                                                   )
-                                                       )
-                                   )
-                       )
+                                                Just url ->
+                                                    connectFrontend url state2
+                                                        |> (\( state3, clientId2 ) ->
+                                                                simulateTime Duration.second state3
+                                                                    |> runFrontendMsg clientId2 (TypedQuestion "Hi")
+                                                                    |> simulateTime Duration.second
+                                                                    |> disconnectFrontend clientId2
+                                                                    |> (\( state4, disconnectedFrontend ) ->
+                                                                            simulateTime Duration.second state4
+                                                                                |> reconnectFrontend disconnectedFrontend
+                                                                                |> (\( state5, clientId3 ) ->
+                                                                                        simulateTime Duration.second state5
+                                                                                            |> runFrontendMsg clientId3 PressedCreateQuestion
+                                                                                            |> simulateTime Duration.second
+                                                                                            |> runFrontendMsg clientId (PressedToggleUpvote (QuestionId (UserId 1) 0))
+                                                                                            |> simulateTime Duration.second
+                                                                                            |> Debug.log "abc"
+                                                                                            |> checkState (check clientId3)
+                                                                                            |> finishSimulation
+                                                                                   )
+                                                                       )
+                                                           )
+                                       )
+                           )
         ]
 
 
@@ -280,6 +303,7 @@ type alias FrontendState =
     , toFrontend : List ToFrontend
     , clipboard : String
     , timers : Dict Duration { msg : Time.Posix -> FrontendMsg, startTime : Time.Posix }
+    , url : Url
     }
 
 
@@ -340,7 +364,7 @@ getClientConnectSubs : BackendSub -> List (SessionId -> ClientId -> BackendMsg)
 getClientConnectSubs backendSub =
     case backendSub of
         SubBatch batch ->
-            List.foldl (\sub list -> getClientDisconnectSubs sub ++ list) [] batch
+            List.foldl (\sub list -> getClientConnectSubs sub ++ list) [] batch
 
         ClientConnected msg ->
             [ msg ]
@@ -355,25 +379,40 @@ connectFrontend url state =
         clientId =
             "clientId " ++ String.fromInt state.counter
 
+        sessionId =
+            "sessionId " ++ String.fromInt (state.counter + 1)
+
         ( frontend, effects ) =
             Frontend.init url FakeKey
 
         subscriptions =
             Frontend.subscriptions frontend
+
+        ( backend, backendEffects ) =
+            getClientConnectSubs (Backend.subscriptions state.backend)
+                |> List.foldl
+                    (\msg ( newBackend, newEffects ) ->
+                        Backend.update (msg sessionId clientId) newBackend
+                            |> Tuple.mapSecond (\a -> Batch [ newEffects, a ])
+                    )
+                    ( state.backend, state.pendingEffects )
     in
     ( { state
         | frontends =
             Dict.insert
                 clientId
                 { model = frontend
-                , sessionId = "sessionId " ++ String.fromInt (state.counter + 1)
+                , sessionId = sessionId
                 , pendingEffects = effects
                 , toFrontend = []
                 , clipboard = ""
                 , timers = getFrontendTimers (Duration.addTo startTime state.elapsedTime) subscriptions
+                , url = url
                 }
                 state.frontends
         , counter = state.counter + 2
+        , backend = backend
+        , pendingEffects = Debug.log "effects" backendEffects
       }
     , clientId
     )
@@ -393,7 +432,7 @@ disconnectFrontend clientId state =
                             )
                             ( state.backend, state.pendingEffects )
             in
-            ( { state | backend = backend, pendingEffects = effects }, { frontend | toFrontend = [] } )
+            ( { state | backend = backend, pendingEffects = effects, frontends = Dict.remove clientId state.frontends }, { frontend | toFrontend = [] } )
 
         Nothing ->
             Debug.todo "Invalid clientId"
@@ -565,10 +604,10 @@ runNetwork state =
         ( backendModel, effects ) =
             List.foldl
                 (\( sessionId, clientId, toBackendMsg ) ( model, effects2 ) ->
-                    --let
-                    --    _ =
-                    --        Debug.log "updateFromFrontend" ( clientId, toBackendMsg )
-                    --in
+                    let
+                        _ =
+                            Debug.log "updateFromFrontend" ( clientId, toBackendMsg )
+                    in
                     Backend.updateFromFrontend sessionId clientId toBackendMsg model
                         |> Tuple.mapSecond (\a -> Batch [ effects2, a ])
                 )
@@ -582,10 +621,10 @@ runNetwork state =
                         ( newModel, newEffects2 ) =
                             List.foldl
                                 (\msg ( model, newEffects ) ->
-                                    --let
-                                    --    _ =
-                                    --        Debug.log "Frontend.updateFromBackend" ( clientId, msg )
-                                    --in
+                                    let
+                                        _ =
+                                            Debug.log "Frontend.updateFromBackend" ( clientId, msg )
+                                    in
                                     Frontend.updateFromBackend msg model
                                         |> Tuple.mapSecond (\a -> Batch_ [ newEffects, a ])
                                 )
@@ -674,6 +713,7 @@ handleUrlChange urlText clientId state =
                                 { frontend
                                     | model = model
                                     , pendingEffects = Batch_ [ frontend.pendingEffects, effects ]
+                                    , url = url
                                 }
                                 state.frontends
                     }
