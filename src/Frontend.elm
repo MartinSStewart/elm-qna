@@ -1224,17 +1224,17 @@ questionView isFirstUnpinnedQuestion isPinned currentTime isHost userId question
             [ Element.text (NonemptyString.toString question.content) ]
         , if isHost then
             Element.Input.button
-                (buttonStyle ++ [ Element.Font.size 18, Element.padding 8 ])
+                (buttonStyle ++ [ Element.padding 0 ])
                 { onPress = Just (PressedTogglePin questionId)
                 , label =
-                    Element.text
-                        (case question.isPinned of
-                            Just _ ->
-                                "Unpin"
+                    case question.isPinned of
+                        Just _ ->
+                            Element.paragraph [ Element.Font.size 18, Element.padding 8 ] [ Element.text "Unpin" ]
 
-                            Nothing ->
-                                "Pin"
-                        )
+                        Nothing ->
+                            Element.paragraph
+                                [ Element.Font.size 16, Element.spacing 0, Element.Font.center, Element.padding 6 ]
+                                [ Element.text "Mark as answered" ]
                 }
 
           else if Question.isCreator userId questionId && not isPinned then
