@@ -1,10 +1,10 @@
 module QnaSession exposing (..)
 
 import AssocList as Dict exposing (Dict)
-import Id exposing (CryptographicKey, HostSecret, UserId(..))
-import Lamdera exposing (ClientId, SessionId)
+import AssocSet as Set exposing (Set)
+import Id exposing (ClientId, CryptographicKey, HostSecret, SessionId, UserId(..))
+import Lamdera
 import Question exposing (BackendQuestion, Question, QuestionId)
-import Set exposing (Set)
 import String.Nonempty exposing (NonemptyString)
 import Time
 

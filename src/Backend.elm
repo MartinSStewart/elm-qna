@@ -1,16 +1,15 @@
 module Backend exposing (app, init, subscriptions, update, updateFromFrontend, updateFromFrontendWithTime)
 
 import AssocList as Dict
+import AssocSet as Set exposing (Set)
 import Duration
-import Id exposing (CryptographicKey, QnaSessionId, UserId(..))
-import Lamdera exposing (ClientId, SessionId)
+import Id exposing (ClientId(..), CryptographicKey, QnaSessionId, SessionId(..), UserId(..))
+import Lamdera
 import List.Extra as List
 import Network exposing (ChangeId)
 import QnaSession exposing (BackendQnaSession)
 import Quantity
 import Question exposing (BackendQuestion, QuestionId)
-import Set
-import Set.Extra as Set
 import Task
 import Time
 import Types exposing (..)
@@ -22,7 +21,7 @@ app =
         , update = \msg model -> update msg model |> Tuple.mapSecond effectToCmd
         , updateFromFrontend =
             \sessionId clientId msg model ->
-                updateFromFrontend sessionId clientId msg model |> Tuple.mapSecond effectToCmd
+                updateFromFrontend (SessionId sessionId) (ClientId clientId) msg model |> Tuple.mapSecond effectToCmd
         , subscriptions = subscriptions >> backendSubToSub
         }
 
@@ -33,7 +32,7 @@ effectToCmd effect =
         Batch backendEffects ->
             List.map effectToCmd backendEffects |> Cmd.batch
 
-        SendToFrontend clientId toFrontend ->
+        SendToFrontend (ClientId clientId) toFrontend ->
             Lamdera.sendToFrontend clientId toFrontend
 
         TimeNow msg ->
@@ -50,10 +49,10 @@ backendSubToSub backendSub =
             Time.every (Duration.inMilliseconds duration) msg
 
         ClientDisconnected msg ->
-            Lamdera.onDisconnect msg
+            Lamdera.onDisconnect (\sessionId clientId -> msg (SessionId sessionId) (ClientId clientId))
 
         ClientConnected msg ->
-            Lamdera.onConnect msg
+            Lamdera.onConnect (\sessionId clientId -> msg (SessionId sessionId) (ClientId clientId))
 
 
 subscriptions : BackendModel -> BackendSub
@@ -139,6 +138,15 @@ updateQnaSession qnaSessionId clientId updateFunc model =
             ( model, Batch [] )
 
 
+toggle : a -> Set a -> Set a
+toggle value set =
+    if Set.member value set then
+        Set.remove value set
+
+    else
+        Set.insert value set
+
+
 updateQnaSession_ :
     SessionId
     -> ClientId
@@ -157,7 +165,7 @@ updateQnaSession_ sessionId clientId currentTime changeId localQnaMsg qnaSession
                     let
                         question2 : BackendQuestion
                         question2 =
-                            { question | votes = Set.toggle sessionId question.votes }
+                            { question | votes = toggle sessionId question.votes }
 
                         serverMsg : ServerQnaMsg
                         serverMsg =

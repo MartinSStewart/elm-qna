@@ -1,8 +1,7 @@
 module Question exposing (..)
 
-import Id exposing (UserId(..))
-import Lamdera exposing (SessionId)
-import Set exposing (Set)
+import AssocSet as Set exposing (Set)
+import Id exposing (SessionId, UserId(..))
 import String.Nonempty exposing (NonemptyString)
 import Time
 
