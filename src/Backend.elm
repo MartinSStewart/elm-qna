@@ -71,10 +71,10 @@ init =
 
 update : BackendMsg -> BackendModel -> ( BackendModel, BackendEffect )
 update msg model =
-    let
-        _ =
-            Debug.log "Backendupdate" msg
-    in
+    --let
+    --    _ =
+    --        Debug.log "Backendupdate" msg
+    --in
     case msg of
         NoOpBackendMsg ->
             ( model, Batch [] )
