@@ -1,18 +1,17 @@
 module Tests exposing (suite)
 
 import AssocList as Dict exposing (Dict)
+import AssocSet as Set
 import Backend
 import Basics.Extra as Basics
 import Duration exposing (Duration)
 import Expect exposing (Expectation)
 import Frontend
-import Id exposing (UserId(..))
-import Lamdera exposing (ClientId, SessionId)
+import Id exposing (ClientId(..), SessionId(..), UserId(..))
 import Network
 import QnaSession
 import Quantity
 import Question exposing (QuestionId(..))
-import Set
 import String.Nonempty exposing (NonemptyString(..))
 import Test exposing (..)
 import Time
@@ -32,8 +31,8 @@ suite =
                 Backend.init
                     |> (\model ->
                             Backend.updateFromFrontendWithTime
-                                "sessionId"
-                                "clientId"
+                                (SessionId "sessionId")
+                                (ClientId "clientId")
                                 (CreateQnaSession (NonemptyString 'T' "est"))
                                 model
                                 startTime
@@ -49,8 +48,8 @@ suite =
                 Backend.init
                     |> (\model ->
                             Backend.updateFromFrontendWithTime
-                                "sessionId"
-                                "clientId"
+                                (SessionId "sessionId")
+                                (ClientId "clientId")
                                 (CreateQnaSession (NonemptyString 'T' "est"))
                                 model
                                 (Time.millisToPosix 0)
@@ -64,8 +63,8 @@ suite =
         , test "Last Q&A activity" <|
             \_ ->
                 QnaSession.initBackend
-                    "sessionId"
-                    "clientId"
+                    (SessionId "sessionId")
+                    (ClientId "clientId")
                     (Id.getShortCryptographicKey { keyCounter = 0 } |> Tuple.second)
                     startTime
                     (NonemptyString 'T' "est")
@@ -377,10 +376,10 @@ connectFrontend : Url -> State -> ( State, ClientId )
 connectFrontend url state =
     let
         clientId =
-            "clientId " ++ String.fromInt state.counter
+            "clientId " ++ String.fromInt state.counter |> ClientId
 
         sessionId =
-            "sessionId " ++ String.fromInt (state.counter + 1)
+            "sessionId " ++ String.fromInt (state.counter + 1) |> SessionId
 
         ( frontend, effects ) =
             Frontend.init url FakeKey
@@ -442,7 +441,7 @@ reconnectFrontend : FrontendState -> State -> ( State, ClientId )
 reconnectFrontend frontendState state =
     let
         clientId =
-            "clientId " ++ String.fromInt state.counter
+            "clientId " ++ String.fromInt state.counter |> ClientId
 
         ( backend, effects ) =
             getClientConnectSubs (Backend.subscriptions state.backend)
