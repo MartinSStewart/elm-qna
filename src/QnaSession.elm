@@ -28,7 +28,8 @@ type alias BackendQnaSession =
     , hostSecret : CryptographicKey HostSecret
     , creationTime : Time.Posix
     , name : NonemptyString
-    , connections : Dict ClientId UserId
+    , connections : Set ClientId
+    , userIds : Dict SessionId UserId
     , connectionCounter : Int
     }
 
@@ -48,7 +49,8 @@ initBackend hostSessionId hostClientId hostSecret creationTime name =
     , hostSecret = hostSecret
     , creationTime = creationTime
     , name = name
-    , connections = Dict.singleton hostClientId (UserId 0)
+    , connections = Set.singleton hostClientId
+    , userIds = Dict.singleton hostSessionId (UserId 0)
     , connectionCounter = 1
     }
 
