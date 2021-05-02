@@ -833,7 +833,7 @@ notConnectedView model =
 hostView : Maybe Time.Posix -> QnaSession -> Element FrontendMsg
 hostView copiedHostUrl qnaSession =
     Element.column
-        [ Element.width Element.fill, Element.spacing 16 ]
+        [ Element.width Element.fill, Element.spacing 12 ]
         [ copyHostUrlButton copiedHostUrl
         , animatedParagraph
             (Animation.fromTo
@@ -847,7 +847,7 @@ hostView copiedHostUrl qnaSession =
                         1
                 ]
             )
-            [ Element.Font.size 16
+            [ smallFont
             , (if Dict.isEmpty qnaSession.questions then
                 "none"
 
@@ -870,12 +870,17 @@ hostView copiedHostUrl qnaSession =
         ]
 
 
+smallFont : Element.Attr decorative msg
+smallFont =
+    Element.Font.size 16
+
+
 copyHostUrlButton : Maybe Time.Posix -> Element FrontendMsg
 copyHostUrlButton copiedHostUrl =
     Element.row
-        [ Element.width Element.fill, Element.spacing 16 ]
+        [ Element.width Element.fill, Element.spacing 12, smallFont ]
         [ Element.Input.button
-            buttonStyle
+            (buttonStyle ++ [ Element.padding 12 ])
             { onPress = Just PressedCopyHostUrl
             , label = Element.text "Add another host"
             }
@@ -1224,7 +1229,7 @@ questionView isFirstUnpinnedQuestion isPinned currentTime isHost userId question
             [ Element.text (NonemptyString.toString question.content) ]
         , if isHost then
             Element.Input.button
-                (buttonStyle ++ [ Element.padding 8, Element.Font.size 16 ])
+                (buttonStyle ++ [ Element.padding 8, smallFont ])
                 { onPress = Just (PressedTogglePin questionId)
                 , label =
                     case question.isPinned of
@@ -1237,7 +1242,7 @@ questionView isFirstUnpinnedQuestion isPinned currentTime isHost userId question
 
           else if Question.isCreator userId questionId && not isPinned then
             Element.Input.button
-                (buttonStyle ++ [ Element.Font.size 16, Element.paddingXY 4 6 ])
+                (buttonStyle ++ [ smallFont, Element.paddingXY 4 6 ])
                 { onPress = Just (PressedDeleteQuestion questionId)
                 , label = Element.text "🗑️"
                 }
@@ -1271,7 +1276,7 @@ upvoteButton questionId question =
         { onPress = Just (PressedToggleUpvote questionId)
         , label =
             Element.row
-                [ Element.centerX, Element.centerY, Element.Font.size 16, Element.spacing 2 ]
+                [ Element.centerX, Element.centerY, smallFont, Element.spacing 2 ]
                 [ Element.text (String.fromInt (Question.votes question))
                 , Element.el [ Element.Font.size 14 ] (Element.text "❤️")
                 ]
