@@ -8,5 +8,5 @@ An app for running question and answer sessions.
 One person creates a Q&A session and others can write questions and upvote what they want to see answered.
 The actual answering of questions is done in voice/video chat.
 
-Made using Lamdera and completed in 17 hours.
+Made using Lamdera.
 
