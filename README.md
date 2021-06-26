@@ -1,6 +1,6 @@
 # elm-qna
 
-<img src="https://raw.githubusercontent.com/MartinSStewart/elm-qna/master/qna-screenshot.png" alt="Q&A screenshot" width="409" height="563">
+<img src="https://github.com/MartinSStewart/elm-qna/blob/master/qna-screenshot.png" alt="Q&A screenshot" width="409" height="563">
 
 https://question-and-answer.lamdera.app
 
