@@ -1,4 +1,4 @@
-port module Frontend exposing (app, domain, init, qnaSessionUpdate, subscriptions, update, updateFromBackend, view)
+port module Frontend exposing (app, app_, copyHostUrlButtonId, copyUrlButtonId, createQnaSessionButtonId, createQuestionButtonId, deleteQuestionButtonId, domain, downloadQuestionsButtonId, init, qnaSessionUpdate, questionInputId, questionsViewId, subscriptions, togglePinButtonId, toggleUpvoteButtonId, update, updateFromBackend, view)
 
 import AssocList as Dict exposing (Dict)
 import Browser exposing (UrlRequest(..))
@@ -28,7 +28,7 @@ import Lamdera
 import Network exposing (Change(..))
 import QnaSession exposing (QnaSession)
 import Quantity
-import Question exposing (Question, QuestionId)
+import Question exposing (Question, QuestionId(..))
 import Simple.Animation as Animation exposing (Animation)
 import Simple.Animation.Animated as Animated
 import Simple.Animation.Property as Property
@@ -58,16 +58,18 @@ copyToClipboard =
 
 
 app =
-    Effect.Lamdera.frontend
-        Lamdera.sendToBackend
-        { init = init
-        , onUrlRequest = UrlClicked
-        , onUrlChange = UrlChanged
-        , update = update
-        , updateFromBackend = updateFromBackend
-        , subscriptions = subscriptions
-        , view = view
-        }
+    Effect.Lamdera.frontend Lamdera.sendToBackend app_
+
+
+app_ =
+    { init = init
+    , onUrlRequest = UrlClicked
+    , onUrlChange = UrlChanged
+    , update = update
+    , updateFromBackend = updateFromBackend
+    , subscriptions = subscriptions
+    , view = view
+    }
 
 
 subscriptions : FrontendModel -> Subscription FrontendOnly FrontendMsg
@@ -721,6 +723,23 @@ updateFromBackend msg model =
                 ( { model | gotFirstConnectMsg = True }, Command.none )
 
 
+button : List (Element.Attribute msg) -> { htmlId : String, onPress : msg, label : Element msg } -> Element msg
+button attributes { htmlId, onPress, label } =
+    Element.Input.button
+        (Element.htmlAttribute (Html.Attributes.id htmlId) :: attributes)
+        { onPress = Just onPress
+        , label = label
+        }
+
+
+createQnaSessionButtonId =
+    "createQnaSessionButton"
+
+
+copyUrlButtonId =
+    "copyUrlButton"
+
+
 view : FrontendModel -> { title : String, body : List (Html FrontendMsg) }
 view model =
     { title = "Q&A"
@@ -735,9 +754,10 @@ view model =
                             [ Element.centerX ]
                             [ Element.text "To join a Q&A session, please use the link your host has provided." ]
                         , Element.el [ Element.Font.size 24, Element.centerX ] (Element.text "OR")
-                        , Element.Input.button
+                        , button
                             (Element.centerX :: buttonStyle)
-                            { onPress = Just PressedCreateQnaSession
+                            { htmlId = createQnaSessionButtonId
+                            , onPress = PressedCreateQnaSession
                             , label = Element.paragraph [] [ Element.text "Create a new Q&A session" ]
                             }
                         ]
@@ -843,16 +863,23 @@ hostView copiedHostUrl qnaSession =
                 |> Element.htmlAttribute
             ]
             [ Element.text "Questions will be deleted after 14 days of inactivity. "
-            , Element.Input.button
+            , button
                 [ Element.Font.color <| Element.rgb 0.2 0.2 1
                 , Element.Border.widthEach { left = 0, right = 0, top = 0, bottom = 1 }
                 , Element.Border.color <| Element.rgba 0 0 0 0
                 , Element.mouseOver [ Element.Border.color <| Element.rgb 0.2 0.2 1 ]
                 ]
-                { onPress = Just PressedDownloadQuestions, label = Element.text "Click here" }
+                { htmlId = downloadQuestionsButtonId
+                , onPress = PressedDownloadQuestions
+                , label = Element.text "Click here"
+                }
             , Element.text " to download them."
             ]
         ]
+
+
+downloadQuestionsButtonId =
+    "downloadQuestionsButton"
 
 
 smallFont : Element.Attr decorative msg
@@ -860,13 +887,18 @@ smallFont =
     Element.Font.size 16
 
 
+copyHostUrlButtonId =
+    "copyHostUrlButton"
+
+
 copyHostUrlButton : Maybe Effect.Time.Posix -> Element FrontendMsg
 copyHostUrlButton copiedHostUrl =
     Element.row
         [ Element.width Element.fill, Element.spacing 12, smallFont ]
-        [ Element.Input.button
+        [ button
             (buttonStyle ++ [ Element.padding 12 ])
-            { onPress = Just PressedCopyHostUrl
+            { htmlId = copyHostUrlButtonId
+            , onPress = PressedCopyHostUrl
             , label = Element.text "Add another host"
             }
         , case copiedHostUrl of
@@ -953,9 +985,10 @@ questionInputView inQnaSession =
                 }
             )
         , Element.row [ Element.spacing 16 ]
-            [ Element.Input.button
+            [ button
                 buttonStyle
-                { onPress = Just PressedCreateQuestion
+                { htmlId = createQuestionButtonId
+                , onPress = PressedCreateQuestion
                 , label =
                     Element.text "Submit question"
                 }
@@ -969,6 +1002,10 @@ questionInputView inQnaSession =
                     Element.none
             ]
         ]
+
+
+createQuestionButtonId =
+    "createQuestionButton"
 
 
 valiatedQuestion : String -> Result String NonemptyString
@@ -1076,7 +1113,7 @@ emptyContainer qnaSessionId isHost maybeCopiedUrl =
             [ Element.paragraph
                 [ Element.Font.center, Element.Font.size 20 ]
                 [ Element.text "Copy the link below so people can ask you questions:" ]
-            , Element.Input.button
+            , button
                 [ Element.centerX
                 , Element.Font.size 20
                 , Element.onRight <|
@@ -1100,7 +1137,8 @@ emptyContainer qnaSessionId isHost maybeCopiedUrl =
                         Nothing ->
                             Element.none
                 ]
-                { onPress = Just PressedCopyUrl
+                { htmlId = copyUrlButtonId
+                , onPress = PressedCopyUrl
                 , label =
                     Element.row
                         [ Element.spacing 2 ]
@@ -1213,9 +1251,10 @@ questionView isFirstUnpinnedQuestion isPinned currentTime isHost userId question
             [ Element.htmlAttribute <| Html.Attributes.style "word-break" "break-word" ]
             [ Element.text (NonemptyString.toString question.content) ]
         , if isHost then
-            Element.Input.button
+            button
                 (buttonStyle ++ [ Element.padding 8, smallFont ])
-                { onPress = Just (PressedTogglePin questionId)
+                { htmlId = togglePinButtonId
+                , onPress = PressedTogglePin questionId
                 , label =
                     case question.isPinned of
                         Just _ ->
@@ -1226,9 +1265,10 @@ questionView isFirstUnpinnedQuestion isPinned currentTime isHost userId question
                 }
 
           else if Question.isCreator userId questionId && not isPinned then
-            Element.Input.button
+            button
                 (buttonStyle ++ [ smallFont, Element.paddingXY 4 6 ])
-                { onPress = Just (PressedDeleteQuestion questionId)
+                { htmlId = deleteQuestionButtonId
+                , onPress = PressedDeleteQuestion questionId
                 , label = Element.text "🗑️"
                 }
 
@@ -1237,9 +1277,17 @@ questionView isFirstUnpinnedQuestion isPinned currentTime isHost userId question
         ]
 
 
+togglePinButtonId =
+    "togglePinButton"
+
+
+deleteQuestionButtonId =
+    "deleteQuestionButton"
+
+
 upvoteButton : QuestionId -> Question -> Element FrontendMsg
 upvoteButton questionId question =
-    Element.Input.button
+    button
         [ Element.Border.rounded 999
         , Element.padding 8
         , Element.Background.color <|
@@ -1258,7 +1306,8 @@ upvoteButton questionId question =
             else
                 Element.rgb 0.4 0.4 0.4
         ]
-        { onPress = Just (PressedToggleUpvote questionId)
+        { htmlId = toggleUpvoteButtonId questionId
+        , onPress = PressedToggleUpvote questionId
         , label =
             Element.row
                 [ Element.centerX, Element.centerY, smallFont, Element.spacing 2 ]
@@ -1266,6 +1315,11 @@ upvoteButton questionId question =
                 , Element.el [ Element.Font.size 14 ] (Element.text "❤️")
                 ]
         }
+
+
+toggleUpvoteButtonId : QuestionId -> String
+toggleUpvoteButtonId (QuestionId (UserId userId) index) =
+    "toggleUpvoteButton_" ++ String.fromInt userId ++ "_" ++ String.fromInt index
 
 
 buttonStyle : List (Element.Attr () msg)

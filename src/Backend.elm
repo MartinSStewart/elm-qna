@@ -1,4 +1,4 @@
-module Backend exposing (app, init, subscriptions, update, updateFromFrontend, updateFromFrontendWithTime)
+module Backend exposing (app, app_, init, subscriptions, update, updateFromFrontend, updateFromFrontendWithTime)
 
 import AssocList as Dict
 import AssocSet as Set exposing (Set)
@@ -19,14 +19,15 @@ import Types exposing (..)
 
 
 app =
-    Effect.Lamdera.backend
-        Lamdera.broadcast
-        Lamdera.sendToFrontend
-        { init = init
-        , update = update
-        , updateFromFrontend = updateFromFrontend
-        , subscriptions = subscriptions
-        }
+    Effect.Lamdera.backend Lamdera.broadcast Lamdera.sendToFrontend app_
+
+
+app_ =
+    { init = init
+    , update = update
+    , updateFromFrontend = updateFromFrontend
+    , subscriptions = subscriptions
+    }
 
 
 subscriptions : BackendModel -> Subscription BackendOnly BackendMsg
