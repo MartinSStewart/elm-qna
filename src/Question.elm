@@ -1,15 +1,16 @@
 module Question exposing (..)
 
 import AssocSet as Set exposing (Set)
-import Id exposing (SessionId, UserId(..))
+import Effect.Lamdera exposing (SessionId)
+import Effect.Time
+import Id exposing (UserId(..))
 import String.Nonempty exposing (NonemptyString)
-import Time
 
 
 type alias Question =
-    { creationTime : Time.Posix
+    { creationTime : Effect.Time.Posix
     , content : NonemptyString
-    , isPinned : Maybe Time.Posix
+    , isPinned : Maybe Effect.Time.Posix
     , otherVotes : Int
     , isUpvoted : Bool
     }
@@ -20,9 +21,9 @@ type QuestionId
 
 
 type alias BackendQuestion =
-    { creationTime : Time.Posix
+    { creationTime : Effect.Time.Posix
     , content : NonemptyString
-    , isPinned : Maybe Time.Posix
+    , isPinned : Maybe Effect.Time.Posix
     , votes : Set SessionId
     }
 
@@ -46,9 +47,9 @@ backendToFrontend sessionId backendQuestion =
     }
 
 
-isNewQuestion : Time.Posix -> Question -> Bool
+isNewQuestion : Effect.Time.Posix -> Question -> Bool
 isNewQuestion currentTime question =
-    Time.posixToMillis question.creationTime + 1600 > Time.posixToMillis currentTime
+    Effect.Time.posixToMillis question.creationTime + 1600 > Effect.Time.posixToMillis currentTime
 
 
 isCreator : UserId -> QuestionId -> Bool

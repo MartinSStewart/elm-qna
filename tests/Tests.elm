@@ -5,6 +5,7 @@ import AssocSet as Set
 import Backend
 import Basics.Extra as Basics
 import Duration exposing (Duration)
+import Effect.Time
 import Expect exposing (Expectation)
 import Frontend
 import Id exposing (ClientId(..), SessionId(..), UserId(..))
@@ -14,13 +15,12 @@ import Quantity
 import Question exposing (QuestionId(..))
 import String.Nonempty exposing (NonemptyString(..))
 import Test exposing (..)
-import Time
 import Types exposing (BackendEffect(..), BackendModel, BackendMsg(..), BackendSub(..), FrontendEffect(..), FrontendModel, FrontendMsg(..), FrontendSub(..), Key(..), ToBackend(..), ToFrontend)
 import Url exposing (Url)
 
 
 startTime =
-    Time.millisToPosix 0
+    Effect.Time.millisToPosix 0
 
 
 suite : Test
@@ -52,7 +52,7 @@ suite =
                                 (ClientId "clientId")
                                 (CreateQnaSession (NonemptyString 'T' "est"))
                                 model
-                                (Time.millisToPosix 0)
+                                (Effect.Time.millisToPosix 0)
                        )
                     |> Tuple.first
                     |> Backend.update (CheckSessions (Duration.addTo startTime (Duration.days 14.01)))
@@ -270,7 +270,7 @@ type alias State =
     , counter : Int
     , elapsedTime : Duration
     , toBackend : List ( SessionId, ClientId, ToBackend )
-    , timers : Dict Duration { msg : Time.Posix -> BackendMsg, startTime : Time.Posix }
+    , timers : Dict Duration { msg : Effect.Time.Posix -> BackendMsg, startTime : Effect.Time.Posix }
     , testErrors : List String
     }
 
@@ -300,7 +300,7 @@ type alias FrontendState =
     , pendingEffects : FrontendEffect
     , toFrontend : List ToFrontend
     , clipboard : String
-    , timers : Dict Duration { msg : Time.Posix -> FrontendMsg, startTime : Time.Posix }
+    , timers : Dict Duration { msg : Effect.Time.Posix -> FrontendMsg, startTime : Effect.Time.Posix }
     , url : Url
     }
 
@@ -322,7 +322,7 @@ init =
     }
 
 
-getFrontendTimers : Time.Posix -> FrontendSub -> Dict Duration { msg : Time.Posix -> FrontendMsg, startTime : Time.Posix }
+getFrontendTimers : Effect.Time.Posix -> FrontendSub -> Dict Duration { msg : Effect.Time.Posix -> FrontendMsg, startTime : Effect.Time.Posix }
 getFrontendTimers currentTime frontendSub =
     case frontendSub of
         SubBatch_ batch ->
@@ -332,7 +332,7 @@ getFrontendTimers currentTime frontendSub =
             Dict.singleton duration { msg = msg, startTime = currentTime }
 
 
-getBackendTimers : Time.Posix -> BackendSub -> Dict Duration { msg : Time.Posix -> BackendMsg, startTime : Time.Posix }
+getBackendTimers : Effect.Time.Posix -> BackendSub -> Dict Duration { msg : Effect.Time.Posix -> BackendMsg, startTime : Effect.Time.Posix }
 getBackendTimers currentTime backendSub =
     case backendSub of
         SubBatch batch ->
@@ -501,7 +501,7 @@ simulateStep state =
         newTime =
             Quantity.plus state.elapsedTime animationFrame
 
-        getCompletedTimers : Dict Duration { a | startTime : Time.Posix } -> List ( Duration, { a | startTime : Time.Posix } )
+        getCompletedTimers : Dict Duration { a | startTime : Effect.Time.Posix } -> List ( Duration, { a | startTime : Effect.Time.Posix } )
         getCompletedTimers timers =
             Dict.toList timers
                 |> List.filter

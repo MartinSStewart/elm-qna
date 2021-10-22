@@ -3,73 +3,47 @@ module Backend exposing (app, init, subscriptions, update, updateFromFrontend, u
 import AssocList as Dict
 import AssocSet as Set exposing (Set)
 import Duration
-import Id exposing (ClientId(..), CryptographicKey, QnaSessionId, SessionId(..), UserId(..))
+import Effect.Command as Command exposing (BackendOnly, Command)
+import Effect.Lamdera exposing (ClientId, SessionId)
+import Effect.Subscription as Subscription exposing (Subscription)
+import Effect.Task
+import Effect.Time
+import Id exposing (CryptographicKey, QnaSessionId, UserId(..))
 import Lamdera
 import List.Extra as List
 import Network exposing (ChangeId)
 import QnaSession exposing (BackendQnaSession)
 import Quantity
 import Question exposing (BackendQuestion, QuestionId)
-import Task
-import Time
 import Types exposing (..)
 
 
 app =
-    Lamdera.backend
-        { init = ( init, Cmd.none )
-        , update = \msg model -> update msg model |> Tuple.mapSecond effectToCmd
-        , updateFromFrontend =
-            \sessionId clientId msg model ->
-                updateFromFrontend (SessionId sessionId) (ClientId clientId) msg model |> Tuple.mapSecond effectToCmd
-        , subscriptions = subscriptions >> backendSubToSub
+    Effect.Lamdera.backend
+        Lamdera.broadcast
+        Lamdera.sendToFrontend
+        { init = init
+        , update = update
+        , updateFromFrontend = updateFromFrontend
+        , subscriptions = subscriptions
         }
 
 
-effectToCmd : BackendEffect -> Cmd BackendMsg
-effectToCmd effect =
-    case effect of
-        Batch backendEffects ->
-            List.map effectToCmd backendEffects |> Cmd.batch
-
-        SendToFrontend (ClientId clientId) toFrontend ->
-            Lamdera.sendToFrontend clientId toFrontend
-
-        TimeNow msg ->
-            Task.perform msg Time.now
-
-
-backendSubToSub : BackendSub -> Sub BackendMsg
-backendSubToSub backendSub =
-    case backendSub of
-        SubBatch backendSubs ->
-            List.map backendSubToSub backendSubs |> Sub.batch
-
-        TimeEvery duration msg ->
-            Time.every (Duration.inMilliseconds duration) msg
-
-        ClientDisconnected msg ->
-            Lamdera.onDisconnect (\sessionId clientId -> msg (SessionId sessionId) (ClientId clientId))
-
-        ClientConnected msg ->
-            Lamdera.onConnect (\sessionId clientId -> msg (SessionId sessionId) (ClientId clientId))
-
-
-subscriptions : BackendModel -> BackendSub
+subscriptions : BackendModel -> Subscription BackendOnly BackendMsg
 subscriptions _ =
-    SubBatch
-        [ ClientDisconnected UserDisconnected
-        , ClientConnected UserConnected
-        , TimeEvery Duration.hour CheckSessions
+    Subscription.batch
+        [ Effect.Lamdera.onDisconnect UserDisconnected
+        , Effect.Lamdera.onConnect UserConnected
+        , Effect.Time.every Duration.hour CheckSessions
         ]
 
 
-init : BackendModel
+init : ( BackendModel, Command BackendOnly ToFrontend BackendMsg )
 init =
-    { qnaSessions = Dict.empty, keyCounter = 0 }
+    ( { qnaSessions = Dict.empty, keyCounter = 0 }, Command.none )
 
 
-update : BackendMsg -> BackendModel -> ( BackendModel, BackendEffect )
+update : BackendMsg -> BackendModel -> ( BackendModel, Command BackendOnly ToFrontend BackendMsg )
 update msg model =
     --let
     --    _ =
@@ -77,7 +51,7 @@ update msg model =
     --in
     case msg of
         NoOpBackendMsg ->
-            ( model, Batch [] )
+            ( model, Command.none )
 
         ToBackendWithTime sessionId clientId toBackend currentTime ->
             updateFromFrontendWithTime sessionId clientId toBackend model currentTime
@@ -91,11 +65,11 @@ update msg model =
                         )
                         model.qnaSessions
               }
-            , Batch []
+            , Command.none
             )
 
         UserConnected _ clientId ->
-            ( model, SendToFrontend clientId NewConnection )
+            ( model, Effect.Lamdera.sendToFrontend clientId NewConnection )
 
         CheckSessions currentTime ->
             ( { model
@@ -107,21 +81,21 @@ update msg model =
                         )
                         model.qnaSessions
               }
-            , Batch []
+            , Command.none
             )
 
 
-updateFromFrontend : SessionId -> ClientId -> ToBackend -> BackendModel -> ( BackendModel, BackendEffect )
+updateFromFrontend : SessionId -> ClientId -> ToBackend -> BackendModel -> ( BackendModel, Command BackendOnly ToFrontend BackendMsg )
 updateFromFrontend sessionId clientId msg model =
-    ( model, TimeNow (ToBackendWithTime sessionId clientId msg) )
+    ( model, Effect.Time.now |> Effect.Task.perform (ToBackendWithTime sessionId clientId msg) )
 
 
 updateQnaSession :
     CryptographicKey QnaSessionId
     -> SessionId
-    -> (UserId -> BackendQnaSession -> ( BackendQnaSession, BackendEffect ))
+    -> (UserId -> BackendQnaSession -> ( BackendQnaSession, Command BackendOnly ToFrontend BackendMsg ))
     -> BackendModel
-    -> ( BackendModel, BackendEffect )
+    -> ( BackendModel, Command BackendOnly ToFrontend BackendMsg )
 updateQnaSession qnaSessionId sessionId updateFunc model =
     case Dict.get qnaSessionId model.qnaSessions of
         Just qnaSession ->
@@ -132,10 +106,10 @@ updateQnaSession qnaSessionId sessionId updateFunc model =
                             (\a -> { model | qnaSessions = Dict.insert qnaSessionId a model.qnaSessions })
 
                 Nothing ->
-                    ( model, Batch [] )
+                    ( model, Command.none )
 
         Nothing ->
-            ( model, Batch [] )
+            ( model, Command.none )
 
 
 toggle : a -> Set a -> Set a
@@ -150,13 +124,13 @@ toggle value set =
 updateQnaSession_ :
     SessionId
     -> ClientId
-    -> Time.Posix
+    -> Effect.Time.Posix
     -> ChangeId
     -> LocalQnaMsg
     -> CryptographicKey QnaSessionId
     -> UserId
     -> BackendQnaSession
-    -> ( BackendQnaSession, BackendEffect )
+    -> ( BackendQnaSession, Command BackendOnly ToFrontend BackendMsg )
 updateQnaSession_ sessionId clientId currentTime changeId localQnaMsg qnaSessionId userId qnaSession =
     case localQnaMsg of
         ToggleUpvote questionId ->
@@ -182,20 +156,20 @@ updateQnaSession_ sessionId clientId currentTime changeId localQnaMsg qnaSession
                         |> List.map
                             (\clientId_ ->
                                 if clientId == clientId_ then
-                                    SendToFrontend
+                                    Effect.Lamdera.sendToFrontend
                                         clientId_
                                         (LocalConfirmQnaMsgResponse qnaSessionId changeId ToggleUpvoteResponse)
 
                                 else
-                                    SendToFrontend
+                                    Effect.Lamdera.sendToFrontend
                                         clientId_
                                         (ServerMsgResponse qnaSessionId serverMsg)
                             )
-                        |> Batch
+                        |> Command.batch
                     )
 
                 Nothing ->
-                    ( qnaSession, Batch [] )
+                    ( qnaSession, Command.none )
 
         CreateQuestion _ content ->
             let
@@ -218,16 +192,16 @@ updateQnaSession_ sessionId clientId currentTime changeId localQnaMsg qnaSession
                 |> List.map
                     (\clientId_ ->
                         if clientId == clientId_ then
-                            SendToFrontend
+                            Effect.Lamdera.sendToFrontend
                                 clientId_
                                 (LocalConfirmQnaMsgResponse qnaSessionId changeId (CreateQuestionResponse currentTime))
 
                         else
-                            SendToFrontend
+                            Effect.Lamdera.sendToFrontend
                                 clientId_
                                 (ServerMsgResponse qnaSessionId (NewQuestion questionId currentTime content))
                     )
-                |> Batch
+                |> Command.batch
             )
 
         TogglePin questionId _ ->
@@ -235,7 +209,7 @@ updateQnaSession_ sessionId clientId currentTime changeId localQnaMsg qnaSession
                 case Dict.get questionId qnaSession.questions of
                     Just question ->
                         let
-                            pinStatus : Maybe Time.Posix
+                            pinStatus : Maybe Effect.Time.Posix
                             pinStatus =
                                 case question.isPinned of
                                     Just _ ->
@@ -255,7 +229,7 @@ updateQnaSession_ sessionId clientId currentTime changeId localQnaMsg qnaSession
                             |> List.map
                                 (\clientId_ ->
                                     if clientId == clientId_ then
-                                        SendToFrontend
+                                        Effect.Lamdera.sendToFrontend
                                             clientId_
                                             (LocalConfirmQnaMsgResponse
                                                 qnaSessionId
@@ -264,18 +238,18 @@ updateQnaSession_ sessionId clientId currentTime changeId localQnaMsg qnaSession
                                             )
 
                                     else
-                                        SendToFrontend
+                                        Effect.Lamdera.sendToFrontend
                                             clientId_
                                             (ServerMsgResponse qnaSessionId (QuestionPinned questionId pinStatus))
                                 )
-                            |> Batch
+                            |> Command.batch
                         )
 
                     Nothing ->
-                        ( qnaSession, Batch [] )
+                        ( qnaSession, Command.none )
 
             else
-                ( qnaSession, Batch [] )
+                ( qnaSession, Command.none )
 
         DeleteQuestion questionId ->
             if Question.isCreator userId questionId then
@@ -297,7 +271,7 @@ updateQnaSession_ sessionId clientId currentTime changeId localQnaMsg qnaSession
                     |> List.map
                         (\clientId_ ->
                             if clientId == clientId_ then
-                                SendToFrontend
+                                Effect.Lamdera.sendToFrontend
                                     clientId_
                                     (LocalConfirmQnaMsgResponse
                                         qnaSessionId
@@ -306,15 +280,15 @@ updateQnaSession_ sessionId clientId currentTime changeId localQnaMsg qnaSession
                                     )
 
                             else
-                                SendToFrontend
+                                Effect.Lamdera.sendToFrontend
                                     clientId_
                                     (ServerMsgResponse qnaSessionId (QuestionDeleted questionId))
                         )
-                    |> Batch
+                    |> Command.batch
                 )
 
             else
-                ( qnaSession, Batch [] )
+                ( qnaSession, Command.none )
 
 
 addOrGetUserId : BackendQnaSession -> SessionId -> ClientId -> ( BackendQnaSession, UserId )
@@ -341,8 +315,8 @@ updateFromFrontendWithTime :
     -> ClientId
     -> ToBackend
     -> BackendModel
-    -> Time.Posix
-    -> ( BackendModel, BackendEffect )
+    -> Effect.Time.Posix
+    -> ( BackendModel, Command BackendOnly ToFrontend BackendMsg )
 updateFromFrontendWithTime sessionId clientId msg model currentTime =
     case msg of
         LocalMsgRequest qnaSessionId changeId localQnaMsg ->
@@ -366,7 +340,7 @@ updateFromFrontendWithTime sessionId clientId msg model currentTime =
                                 clientId
                     in
                     ( { model | qnaSessions = Dict.insert qnaSessionId newQnaSession model.qnaSessions }
-                    , SendToFrontend clientId
+                    , Effect.Lamdera.sendToFrontend clientId
                         (GetQnaSessionWithHostInviteResponse
                             hostSecret
                             (Ok
@@ -379,7 +353,7 @@ updateFromFrontendWithTime sessionId clientId msg model currentTime =
 
                 Nothing ->
                     ( model
-                    , SendToFrontend clientId (GetQnaSessionWithHostInviteResponse hostSecret (Err ()))
+                    , Effect.Lamdera.sendToFrontend clientId (GetQnaSessionWithHostInviteResponse hostSecret (Err ()))
                     )
 
         GetQnaSession qnaSessionId ->
@@ -395,7 +369,7 @@ updateFromFrontendWithTime sessionId clientId msg model currentTime =
                                 clientId
                     in
                     ( { model | qnaSessions = Dict.insert qnaSessionId newQnaSession model.qnaSessions }
-                    , SendToFrontend clientId
+                    , Effect.Lamdera.sendToFrontend clientId
                         (GetQnaSessionResponse
                             qnaSessionId
                             (Ok
@@ -413,7 +387,7 @@ updateFromFrontendWithTime sessionId clientId msg model currentTime =
 
                 Nothing ->
                     ( model
-                    , SendToFrontend clientId (GetQnaSessionResponse qnaSessionId (Err ()))
+                    , Effect.Lamdera.sendToFrontend clientId (GetQnaSessionResponse qnaSessionId (Err ()))
                     )
 
         CreateQnaSession qnaSessionName ->
@@ -431,8 +405,8 @@ updateFromFrontendWithTime sessionId clientId msg model currentTime =
                         (QnaSession.initBackend sessionId clientId hostSecret currentTime qnaSessionName)
                         model2.qnaSessions
               }
-            , SendToFrontend clientId (CreateQnaSessionResponse qnaSessionId hostSecret)
+            , Effect.Lamdera.sendToFrontend clientId (CreateQnaSessionResponse qnaSessionId hostSecret)
             )
 
         CheckIfConnectedRequest ->
-            ( model, SendToFrontend clientId CheckIfConnectedResponse )
+            ( model, Effect.Lamdera.sendToFrontend clientId CheckIfConnectedResponse )

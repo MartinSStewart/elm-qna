@@ -2,22 +2,28 @@ port module Frontend exposing (app, domain, init, qnaSessionUpdate, subscription
 
 import AssocList as Dict exposing (Dict)
 import Browser exposing (UrlRequest(..))
-import Browser.Dom
-import Browser.Navigation
 import Csv.Encode
 import Duration
+import Effect.Browser.Dom
+import Effect.Browser.Navigation
+import Effect.Command as Command exposing (Command, FrontendOnly)
+import Effect.File.Download
+import Effect.Lamdera
+import Effect.Subscription as Subscription exposing (Subscription)
+import Effect.Task exposing (Task)
+import Effect.Time
 import Element exposing (Element)
 import Element.Background
 import Element.Border
 import Element.Font
 import Element.Input
 import Element.Keyed
-import File.Download
 import Html exposing (Html)
 import Html.Attributes
 import Html.Events
 import Id exposing (CryptographicKey(..), HostSecret, QnaSessionId, UserId(..))
 import Json.Decode
+import Json.Encode
 import Lamdera
 import Network exposing (Change(..))
 import QnaSession exposing (QnaSession)
@@ -27,93 +33,52 @@ import Simple.Animation as Animation exposing (Animation)
 import Simple.Animation.Animated as Animated
 import Simple.Animation.Property as Property
 import String.Nonempty as NonemptyString exposing (NonemptyString(..))
-import Task exposing (Task)
-import Time
-import Types exposing (ConfirmLocalQnaMsg(..), FrontendEffect(..), FrontendModel, FrontendMsg(..), FrontendStatus(..), FrontendSub(..), InQnaSession_, Key(..), LocalQnaMsg(..), ServerQnaMsg(..), ToBackend(..), ToFrontend(..))
+import Types
+    exposing
+        ( ConfirmLocalQnaMsg(..)
+        , FrontendModel
+        , FrontendMsg(..)
+        , FrontendStatus(..)
+        , InQnaSession_
+        , LocalQnaMsg(..)
+        , ServerQnaMsg(..)
+        , ToBackend(..)
+        , ToFrontend(..)
+        )
 import Url exposing (Url)
 import Url.Parser exposing ((</>))
 
 
-port supermario_copy_to_clipboard_to_js : String -> Cmd msg
+port supermario_copy_to_clipboard_to_js : Json.Encode.Value -> Cmd msg
+
+
+copyToClipboard : String -> Command FrontendOnly toMsg msg
+copyToClipboard =
+    Json.Encode.string >> Command.sendToJs "supermario_copy_to_clipboard_to_js" supermario_copy_to_clipboard_to_js
 
 
 app =
-    Lamdera.frontend
-        { init = \url key -> init url (ActualKey key) |> Tuple.mapSecond effectToCmd
+    Effect.Lamdera.frontend
+        Lamdera.sendToBackend
+        { init = init
         , onUrlRequest = UrlClicked
         , onUrlChange = UrlChanged
-        , update = \msg model -> update msg model |> Tuple.mapSecond effectToCmd
-        , updateFromBackend = \msg model -> updateFromBackend msg model |> Tuple.mapSecond effectToCmd
-        , subscriptions = subscriptions >> frontendSubToSub
+        , update = update
+        , updateFromBackend = updateFromBackend
+        , subscriptions = subscriptions
         , view = view
         }
 
 
-subscriptions : FrontendModel -> FrontendSub
+subscriptions : FrontendModel -> Subscription FrontendOnly FrontendMsg
 subscriptions _ =
-    SubBatch_
-        [ TimeEvery_ Duration.second GotCurrentTime
-        , TimeEvery_ (Duration.seconds 10) CheckIfConnected
+    Subscription.batch
+        [ Effect.Time.every Duration.second GotCurrentTime
+        , Effect.Time.every (Duration.seconds 10) CheckIfConnected
         ]
 
 
-frontendSubToSub : FrontendSub -> Sub FrontendMsg
-frontendSubToSub sub =
-    case sub of
-        SubBatch_ frontendSubs ->
-            List.map frontendSubToSub frontendSubs |> Sub.batch
-
-        TimeEvery_ duration msg ->
-            Time.every (Duration.inMilliseconds duration) msg
-
-
-effectToCmd : FrontendEffect -> Cmd FrontendMsg
-effectToCmd effect =
-    case effect of
-        Batch_ frontendEffects ->
-            List.map effectToCmd frontendEffects |> Cmd.batch
-
-        SendToBackend toBackend ->
-            Lamdera.sendToBackend toBackend
-
-        PushUrl key url ->
-            case key of
-                FakeKey ->
-                    Cmd.none
-
-                ActualKey key_ ->
-                    Browser.Navigation.pushUrl key_ url
-
-        ReplaceUrl key url ->
-            case key of
-                FakeKey ->
-                    Cmd.none
-
-                ActualKey key_ ->
-                    Browser.Navigation.replaceUrl key_ url
-
-        LoadUrl url ->
-            Browser.Navigation.load url
-
-        FileDownload name mime content ->
-            File.Download.string name mime content
-
-        CopyToClipboard text ->
-            supermario_copy_to_clipboard_to_js text
-
-        ScrollToBottom viewportId ->
-            Browser.Dom.getViewportOf viewportId
-                |> Task.andThen
-                    (\{ scene, viewport } ->
-                        scrollToOf 200 questionsViewId (scene.height - viewport.height)
-                    )
-                |> Task.attempt (always NoOpFrontendMsg)
-
-        Blur id ->
-            Browser.Dom.blur id |> Task.attempt (always NoOpFrontendMsg)
-
-
-init : Url.Url -> Key -> ( FrontendModel, FrontendEffect )
+init : Url.Url -> Effect.Browser.Navigation.Key -> ( FrontendModel, Command FrontendOnly ToBackend FrontendMsg )
 init url key =
     case Url.Parser.parse urlDecoder url of
         Just (QnaSessionRoute qnaSessionId) ->
@@ -129,7 +94,11 @@ init url key =
             homepageRouteInit False key
 
 
-qnaSessionRouteInit : Bool -> Key -> CryptographicKey QnaSessionId -> ( FrontendModel, FrontendEffect )
+qnaSessionRouteInit :
+    Bool
+    -> Effect.Browser.Navigation.Key
+    -> CryptographicKey QnaSessionId
+    -> ( FrontendModel, Command FrontendOnly ToBackend FrontendMsg )
 qnaSessionRouteInit gotFirstConnectMsg key qnaSessionId =
     ( { key = key
       , remoteData = LoadingQnaSession qnaSessionId
@@ -137,11 +106,15 @@ qnaSessionRouteInit gotFirstConnectMsg key qnaSessionId =
       , lastConnectionCheck = Nothing
       , gotFirstConnectMsg = gotFirstConnectMsg
       }
-    , SendToBackend (GetQnaSession qnaSessionId)
+    , Effect.Lamdera.sendToBackend (GetQnaSession qnaSessionId)
     )
 
 
-hostInviteRouteInit : Bool -> Key -> CryptographicKey HostSecret -> ( FrontendModel, FrontendEffect )
+hostInviteRouteInit :
+    Bool
+    -> Effect.Browser.Navigation.Key
+    -> CryptographicKey HostSecret
+    -> ( FrontendModel, Command FrontendOnly ToBackend FrontendMsg )
 hostInviteRouteInit gotFirstConnectMsg key hostSecret =
     ( { key = key
       , remoteData = LoadingQnaSessionWithHostInvite hostSecret
@@ -149,7 +122,7 @@ hostInviteRouteInit gotFirstConnectMsg key hostSecret =
       , lastConnectionCheck = Nothing
       , gotFirstConnectMsg = gotFirstConnectMsg
       }
-    , SendToBackend (GetQnaSessionWithHostInvite hostSecret)
+    , Effect.Lamdera.sendToBackend (GetQnaSessionWithHostInvite hostSecret)
     )
 
 
@@ -160,7 +133,7 @@ homepageRouteInit gotFirstConnectMsg key =
       , lastConnectionCheck = Nothing
       , gotFirstConnectMsg = gotFirstConnectMsg
       }
-    , Batch_ []
+    , Command.none
     )
 
 
@@ -184,58 +157,58 @@ urlEncoder (CryptographicKey qnaSessionId) =
     "/" ++ qnaSessionId
 
 
-update : FrontendMsg -> FrontendModel -> ( FrontendModel, FrontendEffect )
+update : FrontendMsg -> FrontendModel -> ( FrontendModel, Command FrontendOnly ToBackend FrontendMsg )
 update msg model =
     case msg of
         UrlClicked urlRequest ->
             case urlRequest of
-                Internal url ->
+                Browser.Internal url ->
                     ( model
-                    , PushUrl model.key (Url.toString url)
+                    , Effect.Browser.Navigation.pushUrl model.key (Url.toString url)
                     )
 
-                External url ->
+                Browser.External url ->
                     ( model
-                    , LoadUrl url
+                    , Effect.Browser.Navigation.load url
                     )
 
         UrlChanged url ->
             case Url.Parser.parse urlDecoder url of
                 Just HomepageRoute ->
-                    ( model, LoadUrl "/" )
+                    ( model, Effect.Browser.Navigation.load "/" )
 
                 Just (QnaSessionRoute qnaSessionId) ->
                     case model.remoteData of
                         InQnaSession inQnaSession ->
                             if inQnaSession.qnaSessionId == qnaSessionId then
-                                ( model, Batch_ [] )
+                                ( model, Command.none )
 
                             else
-                                ( model, LoadUrl (urlEncoder qnaSessionId) )
+                                ( model, Effect.Browser.Navigation.load (urlEncoder qnaSessionId) )
 
                         _ ->
-                            ( model, LoadUrl (urlEncoder qnaSessionId) )
+                            ( model, Effect.Browser.Navigation.load (urlEncoder qnaSessionId) )
 
                 _ ->
-                    ( model, Batch_ [] )
+                    ( model, Command.none )
 
         NoOpFrontendMsg ->
-            ( model, Batch_ [] )
+            ( model, Command.none )
 
         PressedCreateQnaSession ->
             let
                 name =
                     NonemptyString 'T' "est"
             in
-            ( { model | remoteData = CreatingQnaSession name }, SendToBackend (CreateQnaSession name) )
+            ( { model | remoteData = CreatingQnaSession name }, Effect.Lamdera.sendToBackend (CreateQnaSession name) )
 
         TypedQuestion text ->
             case model.remoteData of
                 InQnaSession inQnaSession ->
-                    ( { model | remoteData = InQnaSession { inQnaSession | question = text } }, Batch_ [] )
+                    ( { model | remoteData = InQnaSession { inQnaSession | question = text } }, Command.none )
 
                 _ ->
-                    ( model, Batch_ [] )
+                    ( model, Command.none )
 
         PressedCreateQuestion ->
             updateInQnaSession
@@ -244,7 +217,7 @@ update msg model =
                         Ok nonempty ->
                             let
                                 localMsg =
-                                    CreateQuestion (Maybe.withDefault (Time.millisToPosix 0) model.currentTime) nonempty
+                                    CreateQuestion (Maybe.withDefault (Effect.Time.millisToPosix 0) model.currentTime) nonempty
                             in
                             ( { inQnaSession
                                 | networkModel =
@@ -256,17 +229,23 @@ update msg model =
                                 , pressedCreateQuestion = False
                                 , localChangeCounter = Network.incrementChangeId inQnaSession.localChangeCounter
                               }
-                            , Batch_
-                                [ SendToBackend
+                            , Command.batch
+                                [ Effect.Lamdera.sendToBackend
                                     (LocalMsgRequest inQnaSession.qnaSessionId inQnaSession.localChangeCounter localMsg)
-                                , ScrollToBottom questionsViewId
-                                , Blur questionInputId
+                                , Effect.Browser.Dom.getViewportOf questionsViewId
+                                    |> Effect.Task.andThen
+                                        (\{ scene, viewport } ->
+                                            scrollToOf 200 questionsViewId (scene.height - viewport.height)
+                                        )
+                                    |> Effect.Task.attempt (\_ -> NoOpFrontendMsg)
+                                , Effect.Browser.Dom.blur questionInputId
+                                    |> Effect.Task.attempt (\_ -> TextInputBlurred)
                                 ]
                             )
 
                         Err _ ->
                             ( { inQnaSession | pressedCreateQuestion = True }
-                            , Batch_ []
+                            , Command.none
                             )
                 )
                 model
@@ -280,7 +259,7 @@ update msg model =
                     localMsg =
                         TogglePin
                             questionId
-                            (Maybe.withDefault (Time.millisToPosix 0) model.currentTime)
+                            (Maybe.withDefault (Effect.Time.millisToPosix 0) model.currentTime)
                  in
                  addLocalChange localMsg
                 )
@@ -291,14 +270,14 @@ update msg model =
                 | currentTime = Just currentTime
                 , lastConnectionCheck = Maybe.withDefault currentTime model.lastConnectionCheck |> Just
               }
-            , Batch_ []
+            , Command.none
             )
 
         PressedDownloadQuestions ->
             updateInQnaSession
                 (\inQnaSession ->
                     ( inQnaSession
-                    , FileDownload
+                    , Effect.File.Download.string
                         "questions.csv"
                         "text/csv"
                         (Csv.Encode.encode
@@ -319,7 +298,7 @@ update msg model =
                             , fieldSeparator = ';'
                             }
                             (Dict.values (Network.localState qnaSessionUpdate inQnaSession.networkModel).questions
-                                |> List.sortBy (.creationTime >> Time.posixToMillis)
+                                |> List.sortBy (.creationTime >> Effect.Time.posixToMillis)
                             )
                         )
                     )
@@ -337,11 +316,11 @@ update msg model =
                     case inQnaSession.isHost of
                         Just hostSecret ->
                             ( { inQnaSession | copiedHostUrl = model.currentTime }
-                            , CopyToClipboard ("https://" ++ hostSecretToUrl hostSecret)
+                            , copyToClipboard ("https://" ++ hostSecretToUrl hostSecret)
                             )
 
                         Nothing ->
-                            ( inQnaSession, Batch_ [] )
+                            ( inQnaSession, Command.none )
                 )
                 model
 
@@ -349,13 +328,16 @@ update msg model =
             updateInQnaSession
                 (\inQnaSession ->
                     ( { inQnaSession | copiedUrl = model.currentTime }
-                    , CopyToClipboard ("https://" ++ domain ++ urlEncoder inQnaSession.qnaSessionId)
+                    , copyToClipboard ("https://" ++ domain ++ urlEncoder inQnaSession.qnaSessionId)
                     )
                 )
                 model
 
         CheckIfConnected _ ->
-            ( model, SendToBackend CheckIfConnectedRequest )
+            ( model, Effect.Lamdera.sendToBackend CheckIfConnectedRequest )
+
+        TextInputBlurred ->
+            ( model, Command.none )
 
 
 hostSecretToUrl : CryptographicKey HostSecret -> String
@@ -373,7 +355,7 @@ hostInvite =
     "host-invite"
 
 
-addLocalChange : LocalQnaMsg -> InQnaSession_ -> ( InQnaSession_, FrontendEffect )
+addLocalChange : LocalQnaMsg -> InQnaSession_ -> ( InQnaSession_, Command FrontendOnly ToBackend FrontendMsg )
 addLocalChange localMsg inQnaSession =
     ( { inQnaSession
         | networkModel =
@@ -383,7 +365,7 @@ addLocalChange localMsg inQnaSession =
                 inQnaSession.networkModel
         , localChangeCounter = Network.incrementChangeId inQnaSession.localChangeCounter
       }
-    , SendToBackend (LocalMsgRequest inQnaSession.qnaSessionId inQnaSession.localChangeCounter localMsg)
+    , Effect.Lamdera.sendToBackend (LocalMsgRequest inQnaSession.qnaSessionId inQnaSession.localChangeCounter localMsg)
     )
 
 
@@ -397,33 +379,33 @@ questionInputId =
     "question-input-id"
 
 
-scrollToOf : Int -> String -> Float -> Task Browser.Dom.Error ()
+scrollToOf : Int -> String -> Float -> Effect.Task.Task FrontendOnly Effect.Browser.Dom.Error ()
 scrollToOf millis id y =
-    Task.map2
+    Effect.Task.map2
         (\{ viewport } startTime ->
-            Task.andThen
-                (step (Browser.Dom.setViewportOf id) millis viewport.y y startTime)
-                Time.now
+            Effect.Task.andThen
+                (step (Effect.Browser.Dom.setViewportOf id) millis viewport.y y startTime)
+                Effect.Time.now
         )
-        (Browser.Dom.getViewportOf id)
-        Time.now
-        |> Task.andThen identity
+        (Effect.Browser.Dom.getViewportOf id)
+        Effect.Time.now
+        |> Effect.Task.andThen identity
 
 
-step : (number -> Float -> Task x a) -> Int -> Float -> Float -> Time.Posix -> Time.Posix -> Task x a
+step : (number -> Float -> Effect.Task.Task restriction x a) -> Int -> Float -> Float -> Effect.Time.Posix -> Effect.Time.Posix -> Effect.Task.Task restriction x a
 step f millis start end startTime now =
     let
         elapsed : Int
         elapsed =
-            Time.posixToMillis now - Time.posixToMillis startTime
+            Effect.Time.posixToMillis now - Effect.Time.posixToMillis startTime
     in
     f 0 (position millis start end elapsed)
-        |> Task.andThen
+        |> Effect.Task.andThen
             (if elapsed < millis then
-                \_ -> Time.now |> Task.andThen (step f millis start end startTime)
+                \_ -> Effect.Time.now |> Effect.Task.andThen (step f millis start end startTime)
 
              else
-                Task.succeed
+                Effect.Task.succeed
             )
 
 
@@ -436,7 +418,10 @@ position millis start end elapsed =
         end
 
 
-updateInQnaSession : (InQnaSession_ -> ( InQnaSession_, FrontendEffect )) -> FrontendModel -> ( FrontendModel, FrontendEffect )
+updateInQnaSession :
+    (InQnaSession_ -> ( InQnaSession_, Command FrontendOnly ToBackend FrontendMsg ))
+    -> FrontendModel
+    -> ( FrontendModel, Command FrontendOnly ToBackend FrontendMsg )
 updateInQnaSession updateFunc model =
     case model.remoteData of
         InQnaSession inQnaSession ->
@@ -444,7 +429,7 @@ updateInQnaSession updateFunc model =
                 |> Tuple.mapFirst (\a -> { model | remoteData = InQnaSession a })
 
         _ ->
-            ( model, Batch_ [] )
+            ( model, Command.none )
 
 
 toggleUpvote : QuestionId -> QnaSession -> QnaSession
@@ -458,7 +443,7 @@ toggleUpvote questionId qnaSession =
     }
 
 
-pinQuestion : QuestionId -> Time.Posix -> QnaSession -> QnaSession
+pinQuestion : QuestionId -> Effect.Time.Posix -> QnaSession -> QnaSession
 pinQuestion questionId currentTime qnaSession =
     { qnaSession
         | questions =
@@ -481,7 +466,7 @@ pinQuestion questionId currentTime qnaSession =
     }
 
 
-createQuestion : Time.Posix -> NonemptyString -> QnaSession -> QnaSession
+createQuestion : Effect.Time.Posix -> NonemptyString -> QnaSession -> QnaSession
 createQuestion creationTime content qnaSession =
     let
         questionId : QuestionId
@@ -604,7 +589,7 @@ qnaSessionUpdate msg qnaSession =
             deleteQuestion questionId qnaSession
 
 
-updateFromBackend : ToFrontend -> FrontendModel -> ( FrontendModel, FrontendEffect )
+updateFromBackend : ToFrontend -> FrontendModel -> ( FrontendModel, Command FrontendOnly ToBackend FrontendMsg )
 updateFromBackend msg model =
     case msg of
         ServerMsgResponse qnaSessionId serverQnaMsg ->
@@ -618,7 +603,7 @@ updateFromBackend msg model =
 
                       else
                         inQnaSession
-                    , Batch_ []
+                    , Command.none
                     )
                 )
                 model
@@ -638,7 +623,7 @@ updateFromBackend msg model =
 
                       else
                         inQnaSession
-                    , Batch_ []
+                    , Command.none
                     )
                 )
                 model
@@ -662,7 +647,7 @@ updateFromBackend msg model =
 
                 _ ->
                     model
-            , Batch_ []
+            , Command.none
             )
 
         CreateQnaSessionResponse qnaSessionId hostSecret ->
@@ -677,11 +662,11 @@ updateFromBackend msg model =
                                     (Just hostSecret)
                                 )
                       }
-                    , PushUrl model.key (urlEncoder qnaSessionId)
+                    , Effect.Browser.Navigation.pushUrl model.key (urlEncoder qnaSessionId)
                     )
 
                 _ ->
-                    ( model, Batch_ [] )
+                    ( model, Command.none )
 
         GetQnaSessionWithHostInviteResponse hostSecret result ->
             case model.remoteData of
@@ -694,21 +679,21 @@ updateFromBackend msg model =
                                         Types.initInQnaSession qnaSessionId qnaSession (Just hostSecret_)
                                             |> InQnaSession
                                   }
-                                , ReplaceUrl model.key (urlEncoder qnaSessionId)
+                                , Effect.Browser.Navigation.replaceUrl model.key (urlEncoder qnaSessionId)
                                 )
 
                             Err () ->
-                                ( { model | remoteData = LoadingQnaSessionFailed () }, Batch_ [] )
+                                ( { model | remoteData = LoadingQnaSessionFailed () }, Command.none )
 
                     else
-                        ( model, Batch_ [] )
+                        ( model, Command.none )
 
                 _ ->
-                    ( model, Batch_ [] )
+                    ( model, Command.none )
 
         CheckIfConnectedResponse ->
             ( { model | lastConnectionCheck = model.currentTime }
-            , Batch_ []
+            , Command.none
             )
 
         NewConnection ->
@@ -733,7 +718,7 @@ updateFromBackend msg model =
                         qnaSessionRouteInit True model.key inQnaSession_.qnaSessionId
 
             else
-                ( { model | gotFirstConnectMsg = True }, Batch_ [] )
+                ( { model | gotFirstConnectMsg = True }, Command.none )
 
 
 view : FrontendModel -> { title : String, body : List (Html FrontendMsg) }
@@ -830,7 +815,7 @@ notConnectedView model =
             Element.none
 
 
-hostView : Maybe Time.Posix -> QnaSession -> Element FrontendMsg
+hostView : Maybe Effect.Time.Posix -> QnaSession -> Element FrontendMsg
 hostView copiedHostUrl qnaSession =
     Element.column
         [ Element.width Element.fill, Element.spacing 12 ]
@@ -875,7 +860,7 @@ smallFont =
     Element.Font.size 16
 
 
-copyHostUrlButton : Maybe Time.Posix -> Element FrontendMsg
+copyHostUrlButton : Maybe Effect.Time.Posix -> Element FrontendMsg
 copyHostUrlButton copiedHostUrl =
     Element.row
         [ Element.width Element.fill, Element.spacing 12, smallFont ]
@@ -888,7 +873,7 @@ copyHostUrlButton copiedHostUrl =
             Just copiedTime ->
                 Element.Keyed.el
                     [ Element.width Element.fill ]
-                    ( Time.posixToMillis copiedTime |> String.fromInt
+                    ( Effect.Time.posixToMillis copiedTime |> String.fromInt
                     , animatedParagraph
                         (Animation.steps
                             { options = [], startAt = [ Property.opacity 0 ] }
@@ -1007,8 +992,8 @@ errorColor =
 
 questionsView :
     CryptographicKey QnaSessionId
-    -> Maybe Time.Posix
-    -> Maybe Time.Posix
+    -> Maybe Effect.Time.Posix
+    -> Maybe Effect.Time.Posix
     -> Bool
     -> UserId
     -> Dict QuestionId Question
@@ -1032,7 +1017,7 @@ questionsView qnaSessionId maybeCopiedUrl currentTime isHost userId questions =
                     (\( questionId, question ) ->
                         question.isPinned |> Maybe.map (\pinTime -> ( questionId, pinTime, question ))
                     )
-                |> List.sortBy (\( _, pinTime, _ ) -> Time.posixToMillis pinTime)
+                |> List.sortBy (\( _, pinTime, _ ) -> Effect.Time.posixToMillis pinTime)
                 |> List.map
                     (\( questionId, _, question ) ->
                         keyedQuestion False True ( questionId, question )
@@ -1052,7 +1037,7 @@ questionsView qnaSessionId maybeCopiedUrl currentTime isHost userId questions =
                                 GT
 
                             EQ ->
-                                compare (Time.posixToMillis a.creationTime) (Time.posixToMillis b.creationTime)
+                                compare (Effect.Time.posixToMillis a.creationTime) (Effect.Time.posixToMillis b.creationTime)
                     )
                 |> List.indexedMap
                     (\index value ->
@@ -1082,7 +1067,7 @@ questionsView qnaSessionId maybeCopiedUrl currentTime isHost userId questions =
             |> Element.Keyed.column containerStyle
 
 
-emptyContainer : CryptographicKey QnaSessionId -> Bool -> Maybe Time.Posix -> List (Element FrontendMsg)
+emptyContainer : CryptographicKey QnaSessionId -> Bool -> Maybe Effect.Time.Posix -> List (Element FrontendMsg)
 emptyContainer qnaSessionId isHost maybeCopiedUrl =
     if isHost then
         [ Element.el [ Element.centerX, Element.Font.size 36 ] (Element.text "You are the host!")
@@ -1099,7 +1084,7 @@ emptyContainer qnaSessionId isHost maybeCopiedUrl =
                         Just copiedUrl ->
                             Element.Keyed.el
                                 []
-                                ( Time.posixToMillis copiedUrl |> String.fromInt
+                                ( Effect.Time.posixToMillis copiedUrl |> String.fromInt
                                 , animatedEl
                                     (Animation.steps
                                         { options = [], startAt = [ Property.opacity 0 ] }
@@ -1155,7 +1140,7 @@ animatedEl =
     animatedUi Element.el
 
 
-questionView : Bool -> Bool -> Maybe Time.Posix -> Bool -> UserId -> QuestionId -> Question -> Element FrontendMsg
+questionView : Bool -> Bool -> Maybe Effect.Time.Posix -> Bool -> UserId -> QuestionId -> Question -> Element FrontendMsg
 questionView isFirstUnpinnedQuestion isPinned currentTime isHost userId questionId question =
     animatedRow
         (Animation.fromTo

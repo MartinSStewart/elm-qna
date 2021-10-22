@@ -2,30 +2,24 @@ module Types exposing (..)
 
 import AssocList as Dict exposing (Dict)
 import Browser exposing (UrlRequest)
-import Browser.Navigation
-import Duration exposing (Duration)
-import Id exposing (ClientId, CryptographicKey, HostSecret, QnaSessionId, SessionId, UserId(..))
-import Lamdera
+import Effect.Browser.Navigation
+import Effect.Lamdera exposing (ClientId, SessionId)
+import Effect.Time
+import Id exposing (CryptographicKey, HostSecret, QnaSessionId, UserId(..))
 import Network exposing (ChangeId, NetworkModel)
 import QnaSession exposing (BackendQnaSession, HostStatus, QnaSession)
 import Question exposing (BackendQuestion, Question, QuestionId(..))
 import String.Nonempty exposing (NonemptyString)
-import Time
 import Url exposing (Url)
 
 
 type alias FrontendModel =
-    { key : Key
+    { key : Effect.Browser.Navigation.Key
     , remoteData : FrontendStatus
-    , currentTime : Maybe Time.Posix
-    , lastConnectionCheck : Maybe Time.Posix
+    , currentTime : Maybe Effect.Time.Posix
+    , lastConnectionCheck : Maybe Effect.Time.Posix
     , gotFirstConnectMsg : Bool
     }
-
-
-type Key
-    = FakeKey
-    | ActualKey Browser.Navigation.Key
 
 
 type FrontendStatus
@@ -43,8 +37,8 @@ type alias InQnaSession_ =
     , question : String
     , pressedCreateQuestion : Bool
     , localChangeCounter : ChangeId
-    , copiedHostUrl : Maybe Time.Posix
-    , copiedUrl : Maybe Time.Posix
+    , copiedHostUrl : Maybe Effect.Time.Posix
+    , copiedUrl : Maybe Effect.Time.Posix
     , isHost : Maybe (CryptographicKey HostSecret)
     }
 
@@ -79,28 +73,28 @@ getQuestionId questions userId =
 
 type LocalQnaMsg
     = ToggleUpvote QuestionId
-    | CreateQuestion Time.Posix NonemptyString
-    | TogglePin QuestionId Time.Posix
+    | CreateQuestion Effect.Time.Posix NonemptyString
+    | TogglePin QuestionId Effect.Time.Posix
     | DeleteQuestion QuestionId
 
 
 type ConfirmLocalQnaMsg
     = ToggleUpvoteResponse
-    | CreateQuestionResponse Time.Posix
-    | PinQuestionResponse Time.Posix
+    | CreateQuestionResponse Effect.Time.Posix
+    | PinQuestionResponse Effect.Time.Posix
     | DeleteQuestionResponse
 
 
 type ServerQnaMsg
     = VoteAdded QuestionId
     | VoteRemoved QuestionId
-    | NewQuestion QuestionId Time.Posix NonemptyString
-    | QuestionPinned QuestionId (Maybe Time.Posix)
+    | NewQuestion QuestionId Effect.Time.Posix NonemptyString
+    | QuestionPinned QuestionId (Maybe Effect.Time.Posix)
     | QuestionDeleted QuestionId
 
 
 type FrontendMsg
-    = UrlClicked UrlRequest
+    = UrlClicked Browser.UrlRequest
     | UrlChanged Url
     | NoOpFrontendMsg
     | PressedCreateQnaSession
@@ -108,12 +102,13 @@ type FrontendMsg
     | PressedCreateQuestion
     | PressedToggleUpvote QuestionId
     | PressedTogglePin QuestionId
-    | GotCurrentTime Time.Posix
+    | GotCurrentTime Effect.Time.Posix
     | PressedDownloadQuestions
     | PressedDeleteQuestion QuestionId
     | PressedCopyHostUrl
     | PressedCopyUrl
-    | CheckIfConnected Time.Posix
+    | CheckIfConnected Effect.Time.Posix
+    | TextInputBlurred
 
 
 type ToBackend
@@ -126,10 +121,10 @@ type ToBackend
 
 type BackendMsg
     = NoOpBackendMsg
-    | ToBackendWithTime SessionId ClientId ToBackend Time.Posix
+    | ToBackendWithTime SessionId ClientId ToBackend Effect.Time.Posix
     | UserDisconnected SessionId ClientId
     | UserConnected SessionId ClientId
-    | CheckSessions Time.Posix
+    | CheckSessions Effect.Time.Posix
 
 
 type ToFrontend
@@ -147,33 +142,3 @@ type ToFrontend
     | CreateQnaSessionResponse (CryptographicKey QnaSessionId) (CryptographicKey HostSecret)
     | CheckIfConnectedResponse
     | NewConnection
-
-
-type BackendEffect
-    = Batch (List BackendEffect)
-    | SendToFrontend ClientId ToFrontend
-    | TimeNow (Time.Posix -> BackendMsg)
-
-
-type FrontendEffect
-    = Batch_ (List FrontendEffect)
-    | SendToBackend ToBackend
-    | PushUrl Key String
-    | ReplaceUrl Key String
-    | LoadUrl String
-    | FileDownload String String String
-    | CopyToClipboard String
-    | ScrollToBottom String
-    | Blur String
-
-
-type BackendSub
-    = SubBatch (List BackendSub)
-    | TimeEvery Duration (Time.Posix -> BackendMsg)
-    | ClientDisconnected (SessionId -> ClientId -> BackendMsg)
-    | ClientConnected (SessionId -> ClientId -> BackendMsg)
-
-
-type FrontendSub
-    = SubBatch_ (List FrontendSub)
-    | TimeEvery_ Duration (Time.Posix -> FrontendMsg)

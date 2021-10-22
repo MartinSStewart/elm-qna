@@ -1,16 +1,7 @@
-module Id exposing (ClientId(..), CryptographicKey(..), HostSecret, QnaSessionId, SessionId(..), UserId(..), crytographicKeyToString, getShortCryptographicKey)
+module Id exposing (CryptographicKey(..), HostSecret, QnaSessionId, UserId(..), crytographicKeyToString, getShortCryptographicKey)
 
 import Env
-import Lamdera
 import Sha256
-
-
-type ClientId
-    = ClientId Lamdera.ClientId
-
-
-type SessionId
-    = SessionId Lamdera.SessionId
 
 
 type QnaSessionId

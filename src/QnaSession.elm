@@ -2,11 +2,11 @@ module QnaSession exposing (..)
 
 import AssocList as Dict exposing (Dict)
 import AssocSet as Set exposing (Set)
-import Id exposing (ClientId, CryptographicKey, HostSecret, SessionId, UserId(..))
-import Lamdera
+import Effect.Lamdera exposing (ClientId, SessionId)
+import Effect.Time
+import Id exposing (CryptographicKey, HostSecret, UserId(..))
 import Question exposing (BackendQuestion, Question, QuestionId)
 import String.Nonempty exposing (NonemptyString)
-import Time
 
 
 type alias QnaSession =
@@ -26,7 +26,7 @@ type alias BackendQnaSession =
     { questions : Dict QuestionId BackendQuestion
     , host : Set SessionId
     , hostSecret : CryptographicKey HostSecret
-    , creationTime : Time.Posix
+    , creationTime : Effect.Time.Posix
     , name : NonemptyString
     , connections : Set ClientId
     , userIds : Dict SessionId UserId
@@ -42,7 +42,7 @@ init name =
     }
 
 
-initBackend : SessionId -> ClientId -> CryptographicKey HostSecret -> Time.Posix -> NonemptyString -> BackendQnaSession
+initBackend : SessionId -> ClientId -> CryptographicKey HostSecret -> Effect.Time.Posix -> NonemptyString -> BackendQnaSession
 initBackend hostSessionId hostClientId hostSecret creationTime name =
     { questions = Dict.empty
     , host = Set.singleton hostSessionId
@@ -55,13 +55,13 @@ initBackend hostSessionId hostClientId hostSecret creationTime name =
     }
 
 
-lastActivity : BackendQnaSession -> Time.Posix
+lastActivity : BackendQnaSession -> Effect.Time.Posix
 lastActivity qnaSession =
     List.maximum
-        (Time.posixToMillis qnaSession.creationTime
-            :: List.map (.creationTime >> Time.posixToMillis) (Dict.values qnaSession.questions)
+        (Effect.Time.posixToMillis qnaSession.creationTime
+            :: List.map (.creationTime >> Effect.Time.posixToMillis) (Dict.values qnaSession.questions)
         )
-        |> Maybe.map Time.millisToPosix
+        |> Maybe.map Effect.Time.millisToPosix
         |> Maybe.withDefault qnaSession.creationTime
 
 
