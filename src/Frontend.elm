@@ -134,7 +134,8 @@ qnaSessionRouteInit timezone time gotFirstConnectMsg key qnaSessionId =
       , remoteData = LoadingQnaSession qnaSessionId
       , timezone = timezone
       , time = time
-      , closingDate = ""
+      , closingDateText = ""
+      , closingTimeText = ""
       , lastConnectionCheck = Nothing
       , gotFirstConnectMsg = gotFirstConnectMsg
       }
@@ -154,7 +155,8 @@ hostInviteRouteInit timezone time gotFirstConnectMsg key hostSecret =
       , remoteData = LoadingQnaSessionWithHostInvite hostSecret
       , timezone = timezone
       , time = time
-      , closingDate = ""
+      , closingDateText = ""
+      , closingTimeText = ""
       , lastConnectionCheck = Nothing
       , gotFirstConnectMsg = gotFirstConnectMsg
       }
@@ -167,7 +169,8 @@ homepageRouteInit timezone time gotFirstConnectMsg key =
       , remoteData = Homepage
       , timezone = timezone
       , time = time
-      , closingDate = ""
+      , closingDateText = ""
+      , closingTimeText = ""
       , lastConnectionCheck = Nothing
       , gotFirstConnectMsg = gotFirstConnectMsg
       }
@@ -381,11 +384,14 @@ updateLoaded msg model =
         TextInputBlurred ->
             ( model, Command.none )
 
-        SelectedClosingDate closingDate ->
-            ( { model | closingDate = closingDate }, Command.none )
+        TypedClosingDate closingDate ->
+            ( { model | closingDateText = closingDate }, Command.none )
 
         GotTimezone timezone ->
             ( { model | timezone = timezone }, Command.none )
+
+        TypedClosingTime closingTime ->
+            ( { model | closingTimeText = closingTime }, Command.none )
 
 
 hostSecretToUrl : CryptographicKey HostSecret -> String
@@ -863,7 +869,7 @@ view model =
                                     ]
                                 , case inQnaSession.isHost of
                                     Just _ ->
-                                        hostView loaded.timezone loaded.time loaded.closingDate inQnaSession.copiedHostUrl qnaSession
+                                        hostView loaded inQnaSession.copiedHostUrl qnaSession
 
                                     Nothing ->
                                         questionInputView inQnaSession
@@ -896,11 +902,11 @@ notConnectedView model =
             Element.none
 
 
-hostView : Time.Zone -> Time.Posix -> String -> Maybe Time.Posix -> QnaSession -> Element FrontendMsg
-hostView timezone time closingDate copiedHostUrl qnaSession =
+hostView : FrontendLoaded -> Maybe Time.Posix -> QnaSession -> Element FrontendMsg
+hostView model copiedHostUrl qnaSession =
     Element.column
         [ Element.width Element.fill, Element.spacing 12 ]
-        [ copyHostUrlButton timezone time closingDate copiedHostUrl
+        [ copyHostUrlButton model.timezone model.time model.closingDateText model.closingTimeText copiedHostUrl
         , animatedParagraph
             (Animation.fromTo
                 { duration = 2000, options = [] }
@@ -958,8 +964,13 @@ dateInputId =
     Dom.id "dateInput"
 
 
-copyHostUrlButton : Time.Zone -> Time.Posix -> String -> Maybe Time.Posix -> Element FrontendMsg
-copyHostUrlButton timezone time closingDate copiedHostUrl =
+timeInputId : HtmlId
+timeInputId =
+    Dom.id "timeInput"
+
+
+copyHostUrlButton : Time.Zone -> Time.Posix -> String -> String -> Maybe Time.Posix -> Element FrontendMsg
+copyHostUrlButton timezone time closingDateText closingTimeText copiedHostUrl =
     Element.row
         [ Element.width Element.fill, Element.spacing 12, smallFont ]
         [ button
@@ -968,7 +979,19 @@ copyHostUrlButton timezone time closingDate copiedHostUrl =
             , onPress = PressedCopyHostUrl
             , label = Element.text "Add another host"
             }
-        , dateInput dateInputId SelectedClosingDate (Date.fromPosix timezone time) closingDate False
+        , dateTimeInput
+            { dateInputId = dateInputId
+            , timeInputId = timeInputId
+            , dateChanged = TypedClosingDate
+            , timeChanged = TypedClosingTime
+            , labelText = "How long do people have to ask questions?"
+            , minTime = time
+            , timezone = timezone
+            , dateText = closingDateText
+            , timeText = closingTimeText
+            , isDisabled = False
+            , maybeError = Nothing
+            }
         , case copiedHostUrl of
             Just copiedTime ->
                 Element.Keyed.el
@@ -1412,7 +1435,7 @@ dateTimeInput config =
     Element.column
         [ Element.spacing 4 ]
         [ formLabelAboveEl config.labelText
-        , Element.wrappedRow [ Element.spacing 8 ]
+        , Element.row [ Element.spacing 8, Element.width Element.fill ]
             [ dateInput dateInputId config.dateChanged (Date.fromPosix config.timezone config.minTime) config.dateText config.isDisabled
             , timeInput config.timeInputId config.timeChanged config.timeText config.isDisabled
             ]

@@ -28,7 +28,8 @@ type alias FrontendLoaded =
     , remoteData : FrontendStatus
     , time : Time.Posix
     , timezone : Time.Zone
-    , closingDate : String
+    , closingDateText : String
+    , closingTimeText : String
     , lastConnectionCheck : Maybe Time.Posix
     , gotFirstConnectMsg : Bool
     }
@@ -128,7 +129,8 @@ type FrontendMsg
     | PressedCopyUrl
     | CheckIfConnected Time.Posix
     | TextInputBlurred
-    | SelectedClosingDate String
+    | TypedClosingDate String
+    | TypedClosingTime String
 
 
 type ToBackend
