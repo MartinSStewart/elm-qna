@@ -4,7 +4,7 @@ import AssocList as Dict exposing (Dict)
 import Browser exposing (UrlRequest(..))
 import Csv.Encode
 import Duration
-import Effect.Browser.Dom
+import Effect.Browser.Dom as Dom exposing (HtmlId)
 import Effect.Browser.Navigation
 import Effect.Command as Command exposing (Command, FrontendOnly)
 import Effect.File.Download
@@ -234,13 +234,13 @@ update msg model =
                             , Command.batch
                                 [ Effect.Lamdera.sendToBackend
                                     (LocalMsgRequest inQnaSession.qnaSessionId inQnaSession.localChangeCounter localMsg)
-                                , Effect.Browser.Dom.getViewportOf questionsViewId
+                                , Dom.getViewportOf questionsViewId
                                     |> Effect.Task.andThen
                                         (\{ scene, viewport } ->
                                             scrollToOf 200 questionsViewId (scene.height - viewport.height)
                                         )
                                     |> Effect.Task.attempt (\_ -> NoOpFrontendMsg)
-                                , Effect.Browser.Dom.blur questionInputId
+                                , Dom.blur questionInputId
                                     |> Effect.Task.attempt (\_ -> TextInputBlurred)
                                 ]
                             )
@@ -371,25 +371,25 @@ addLocalChange localMsg inQnaSession =
     )
 
 
-questionsViewId : String
+questionsViewId : HtmlId
 questionsViewId =
-    "questions-view-id"
+    Dom.id "questions-view-id"
 
 
-questionInputId : String
+questionInputId : HtmlId
 questionInputId =
-    "question-input-id"
+    Dom.id "question-input-id"
 
 
-scrollToOf : Int -> String -> Float -> Effect.Task.Task FrontendOnly Effect.Browser.Dom.Error ()
+scrollToOf : Int -> HtmlId -> Float -> Effect.Task.Task FrontendOnly Dom.Error ()
 scrollToOf millis id y =
     Effect.Task.map2
         (\{ viewport } startTime ->
             Effect.Task.andThen
-                (step (Effect.Browser.Dom.setViewportOf id) millis viewport.y y startTime)
+                (step (Dom.setViewportOf id) millis viewport.y y startTime)
                 Effect.Time.now
         )
-        (Effect.Browser.Dom.getViewportOf id)
+        (Dom.getViewportOf id)
         Effect.Time.now
         |> Effect.Task.andThen identity
 
@@ -723,21 +723,21 @@ updateFromBackend msg model =
                 ( { model | gotFirstConnectMsg = True }, Command.none )
 
 
-button : List (Element.Attribute msg) -> { htmlId : String, onPress : msg, label : Element msg } -> Element msg
+button : List (Element.Attribute msg) -> { htmlId : HtmlId, onPress : msg, label : Element msg } -> Element msg
 button attributes { htmlId, onPress, label } =
     Element.Input.button
-        (Element.htmlAttribute (Html.Attributes.id htmlId) :: attributes)
+        (Element.htmlAttribute (Dom.idToAttribute htmlId) :: attributes)
         { onPress = Just onPress
         , label = label
         }
 
 
 createQnaSessionButtonId =
-    "createQnaSessionButton"
+    Dom.id "createQnaSessionButton"
 
 
 copyUrlButtonId =
-    "copyUrlButton"
+    Dom.id "copyUrlButton"
 
 
 view : FrontendModel -> { title : String, body : List (Html FrontendMsg) }
@@ -879,7 +879,7 @@ hostView copiedHostUrl qnaSession =
 
 
 downloadQuestionsButtonId =
-    "downloadQuestionsButton"
+    Dom.id "downloadQuestionsButton"
 
 
 smallFont : Element.Attr decorative msg
@@ -888,7 +888,7 @@ smallFont =
 
 
 copyHostUrlButtonId =
-    "copyHostUrlButton"
+    Dom.id "copyHostUrlButton"
 
 
 copyHostUrlButton : Maybe Effect.Time.Posix -> Element FrontendMsg
@@ -972,7 +972,7 @@ questionInputView inQnaSession =
                                         Json.Decode.fail ""
                                 )
                         )
-                , Element.htmlAttribute <| Html.Attributes.id questionInputId
+                , Element.htmlAttribute <| Dom.idToAttribute questionInputId
                 ]
                 { onChange = TypedQuestion
                 , placeholder = Nothing
@@ -1005,7 +1005,7 @@ questionInputView inQnaSession =
 
 
 createQuestionButtonId =
-    "createQuestionButton"
+    Dom.id "createQuestionButton"
 
 
 valiatedQuestion : String -> Result String NonemptyString
@@ -1042,7 +1042,7 @@ questionsView qnaSessionId maybeCopiedUrl currentTime isHost userId questions =
             , Element.width Element.fill
             , Element.Border.rounded 4
             , Element.scrollbars
-            , Element.htmlAttribute <| Html.Attributes.id questionsViewId
+            , Element.htmlAttribute <| Dom.idToAttribute questionsViewId
             , Element.Border.width 1
             , Element.Border.color <| Element.rgb 0.5 0.5 0.5
             ]
@@ -1278,11 +1278,11 @@ questionView isFirstUnpinnedQuestion isPinned currentTime isHost userId question
 
 
 togglePinButtonId =
-    "togglePinButton"
+    Dom.id "togglePinButton"
 
 
 deleteQuestionButtonId =
-    "deleteQuestionButton"
+    Dom.id "deleteQuestionButton"
 
 
 upvoteButton : QuestionId -> Question -> Element FrontendMsg
@@ -1317,9 +1317,9 @@ upvoteButton questionId question =
         }
 
 
-toggleUpvoteButtonId : QuestionId -> String
+toggleUpvoteButtonId : QuestionId -> HtmlId
 toggleUpvoteButtonId (QuestionId (UserId userId) index) =
-    "toggleUpvoteButton_" ++ String.fromInt userId ++ "_" ++ String.fromInt index
+    "toggleUpvoteButton_" ++ String.fromInt userId ++ "_" ++ String.fromInt index |> Dom.id
 
 
 buttonStyle : List (Element.Attr () msg)
