@@ -2,9 +2,10 @@ module Types exposing (..)
 
 import AssocList as Dict exposing (Dict)
 import Browser exposing (UrlRequest)
-import Effect.Browser.Navigation
+import Date exposing (Date)
+import Effect.Browser.Navigation as Navigation
 import Effect.Lamdera exposing (ClientId, SessionId)
-import Effect.Time
+import Effect.Time as Time
 import Id exposing (CryptographicKey, HostSecret, QnaSessionId, UserId(..))
 import Network exposing (ChangeId, NetworkModel)
 import QnaSession exposing (BackendQnaSession, HostStatus, QnaSession)
@@ -13,13 +14,30 @@ import String.Nonempty exposing (NonemptyString)
 import Url exposing (Url)
 
 
-type alias FrontendModel =
-    { key : Effect.Browser.Navigation.Key
+type FrontendModel
+    = Loading FrontendLoading
+    | Loaded FrontendLoaded
+
+
+type alias FrontendLoading =
+    { time : Maybe Time.Posix, timezone : Maybe Time.Zone, key : Navigation.Key, route : Maybe Route }
+
+
+type alias FrontendLoaded =
+    { key : Navigation.Key
     , remoteData : FrontendStatus
-    , currentTime : Maybe Effect.Time.Posix
-    , lastConnectionCheck : Maybe Effect.Time.Posix
+    , time : Time.Posix
+    , timezone : Time.Zone
+    , closingDate : String
+    , lastConnectionCheck : Maybe Time.Posix
     , gotFirstConnectMsg : Bool
     }
+
+
+type Route
+    = HomepageRoute
+    | HostInviteRoute (CryptographicKey HostSecret)
+    | QnaSessionRoute (CryptographicKey QnaSessionId)
 
 
 type FrontendStatus
@@ -37,8 +55,8 @@ type alias InQnaSession_ =
     , question : String
     , pressedCreateQuestion : Bool
     , localChangeCounter : ChangeId
-    , copiedHostUrl : Maybe Effect.Time.Posix
-    , copiedUrl : Maybe Effect.Time.Posix
+    , copiedHostUrl : Maybe Time.Posix
+    , copiedUrl : Maybe Time.Posix
     , isHost : Maybe (CryptographicKey HostSecret)
     }
 
@@ -73,23 +91,23 @@ getQuestionId questions userId =
 
 type LocalQnaMsg
     = ToggleUpvote QuestionId
-    | CreateQuestion Effect.Time.Posix NonemptyString
-    | TogglePin QuestionId Effect.Time.Posix
+    | CreateQuestion Time.Posix NonemptyString
+    | TogglePin QuestionId Time.Posix
     | DeleteQuestion QuestionId
 
 
 type ConfirmLocalQnaMsg
     = ToggleUpvoteResponse
-    | CreateQuestionResponse Effect.Time.Posix
-    | PinQuestionResponse Effect.Time.Posix
+    | CreateQuestionResponse Time.Posix
+    | PinQuestionResponse Time.Posix
     | DeleteQuestionResponse
 
 
 type ServerQnaMsg
     = VoteAdded QuestionId
     | VoteRemoved QuestionId
-    | NewQuestion QuestionId Effect.Time.Posix NonemptyString
-    | QuestionPinned QuestionId (Maybe Effect.Time.Posix)
+    | NewQuestion QuestionId Time.Posix NonemptyString
+    | QuestionPinned QuestionId (Maybe Time.Posix)
     | QuestionDeleted QuestionId
 
 
@@ -102,13 +120,15 @@ type FrontendMsg
     | PressedCreateQuestion
     | PressedToggleUpvote QuestionId
     | PressedTogglePin QuestionId
-    | GotCurrentTime Effect.Time.Posix
+    | GotCurrentTime Time.Posix
+    | GotTimezone Time.Zone
     | PressedDownloadQuestions
     | PressedDeleteQuestion QuestionId
     | PressedCopyHostUrl
     | PressedCopyUrl
-    | CheckIfConnected Effect.Time.Posix
+    | CheckIfConnected Time.Posix
     | TextInputBlurred
+    | SelectedClosingDate String
 
 
 type ToBackend
@@ -121,10 +141,10 @@ type ToBackend
 
 type BackendMsg
     = NoOpBackendMsg
-    | ToBackendWithTime SessionId ClientId ToBackend Effect.Time.Posix
+    | ToBackendWithTime SessionId ClientId ToBackend Time.Posix
     | UserDisconnected SessionId ClientId
     | UserConnected SessionId ClientId
-    | CheckSessions Effect.Time.Posix
+    | CheckSessions Time.Posix
 
 
 type ToFrontend
