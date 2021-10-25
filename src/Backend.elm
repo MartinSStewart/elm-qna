@@ -7,7 +7,7 @@ import Effect.Command as Command exposing (BackendOnly, Command)
 import Effect.Lamdera exposing (ClientId, SessionId)
 import Effect.Subscription as Subscription exposing (Subscription)
 import Effect.Task
-import Effect.Time
+import Effect.Time as Time
 import Id exposing (CryptographicKey, QnaSessionId, UserId(..))
 import Lamdera
 import List.Extra as List
@@ -35,7 +35,7 @@ subscriptions _ =
     Subscription.batch
         [ Effect.Lamdera.onDisconnect UserDisconnected
         , Effect.Lamdera.onConnect UserConnected
-        , Effect.Time.every Duration.hour CheckSessions
+        , Time.every Duration.hour CheckSessions
         ]
 
 
@@ -88,7 +88,7 @@ update msg model =
 
 updateFromFrontend : SessionId -> ClientId -> ToBackend -> BackendModel -> ( BackendModel, Command BackendOnly ToFrontend BackendMsg )
 updateFromFrontend sessionId clientId msg model =
-    ( model, Effect.Time.now |> Effect.Task.perform (ToBackendWithTime sessionId clientId msg) )
+    ( model, Time.now |> Effect.Task.perform (ToBackendWithTime sessionId clientId msg) )
 
 
 updateQnaSession :
@@ -125,7 +125,7 @@ toggle value set =
 updateQnaSession_ :
     SessionId
     -> ClientId
-    -> Effect.Time.Posix
+    -> Time.Posix
     -> ChangeId
     -> LocalQnaMsg
     -> CryptographicKey QnaSessionId
@@ -177,17 +177,29 @@ updateQnaSession_ sessionId clientId currentTime changeId localQnaMsg qnaSession
                 questionId : QuestionId
                 questionId =
                     Types.getQuestionId qnaSession.questions userId
+
+                isTooLate =
+                    case qnaSession.closingTime of
+                        Just closingTime ->
+                            Time.posixToMillis closingTime < Time.posixToMillis currentTime
+
+                        Nothing ->
+                            False
             in
             ( { qnaSession
                 | questions =
-                    Dict.insert
-                        questionId
-                        { creationTime = currentTime
-                        , content = content
-                        , isPinned = Nothing
-                        , votes = Set.empty
-                        }
+                    if isTooLate then
                         qnaSession.questions
+
+                    else
+                        Dict.insert
+                            questionId
+                            { creationTime = currentTime
+                            , content = content
+                            , isPinned = Nothing
+                            , votes = Set.empty
+                            }
+                            qnaSession.questions
               }
             , Set.toList qnaSession.connections
                 |> List.map
@@ -197,10 +209,13 @@ updateQnaSession_ sessionId clientId currentTime changeId localQnaMsg qnaSession
                                 clientId_
                                 (LocalConfirmQnaMsgResponse qnaSessionId changeId (CreateQuestionResponse currentTime))
 
-                        else
+                        else if not isTooLate then
                             Effect.Lamdera.sendToFrontend
                                 clientId_
                                 (ServerMsgResponse qnaSessionId (NewQuestion questionId currentTime content))
+
+                        else
+                            Command.none
                     )
                 |> Command.batch
             )
@@ -210,7 +225,7 @@ updateQnaSession_ sessionId clientId currentTime changeId localQnaMsg qnaSession
                 case Dict.get questionId qnaSession.questions of
                     Just question ->
                         let
-                            pinStatus : Maybe Effect.Time.Posix
+                            pinStatus : Maybe Time.Posix
                             pinStatus =
                                 case question.isPinned of
                                     Just _ ->
@@ -338,7 +353,7 @@ updateFromFrontendWithTime :
     -> ClientId
     -> ToBackend
     -> BackendModel
-    -> Effect.Time.Posix
+    -> Time.Posix
     -> ( BackendModel, Command BackendOnly ToFrontend BackendMsg )
 updateFromFrontendWithTime sessionId clientId msg model currentTime =
     case msg of

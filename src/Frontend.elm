@@ -419,12 +419,12 @@ setClosingTimeHelper model updateFunc qnaSession =
                 hostState2 =
                     updateFunc hostState
             in
-            case validateDateTime model.time model.timezone hostState2.closingDateText hostState2.closingTimeText of
+            case validateDateTime model.timezone hostState2.closingDateText hostState2.closingTimeText of
                 Ok closingTime ->
                     addLocalChange (ChangeClosingTime closingTime) { qnaSession | isHost = Just hostState2 }
 
                 Err _ ->
-                    ( qnaSession, Command.none )
+                    ( { qnaSession | isHost = Just hostState2 }, Command.none )
 
         Nothing ->
             ( qnaSession, Command.none )
@@ -569,18 +569,30 @@ createQuestion creationTime content qnaSession =
         questionId : QuestionId
         questionId =
             Types.getQuestionId qnaSession.questions qnaSession.userId
+
+        isTooLate =
+            case qnaSession.closingTime of
+                Just closingTime ->
+                    Time.posixToMillis closingTime < Time.posixToMillis creationTime
+
+                Nothing ->
+                    False
     in
     { qnaSession
         | questions =
-            Dict.insert
-                questionId
-                { creationTime = creationTime
-                , content = content
-                , isPinned = Nothing
-                , otherVotes = 0
-                , isUpvoted = False
-                }
+            if isTooLate then
                 qnaSession.questions
+
+            else
+                Dict.insert
+                    questionId
+                    { creationTime = creationTime
+                    , content = content
+                    , isPinned = Nothing
+                    , otherVotes = 0
+                    , isUpvoted = False
+                    }
+                    qnaSession.questions
     }
 
 
@@ -762,7 +774,7 @@ updateLoadedFromBackend msg model =
                             | remoteData =
                                 case result of
                                     Ok { isHost, qnaSession } ->
-                                        InQnaSession (Types.initInQnaSession qnaSessionId qnaSession isHost)
+                                        InQnaSession (Types.initInQnaSession model.timezone qnaSessionId qnaSession isHost)
 
                                     Err () ->
                                         LoadingQnaSessionFailed ()
@@ -783,6 +795,7 @@ updateLoadedFromBackend msg model =
                         | remoteData =
                             InQnaSession
                                 (Types.initInQnaSession
+                                    model.timezone
                                     qnaSessionId
                                     (QnaSession.init Nothing qnaSessionName)
                                     (Just hostSecret)
@@ -802,7 +815,7 @@ updateLoadedFromBackend msg model =
                             Ok ( qnaSessionId, qnaSession ) ->
                                 ( { model
                                     | remoteData =
-                                        Types.initInQnaSession qnaSessionId qnaSession (Just hostSecret_)
+                                        Types.initInQnaSession model.timezone qnaSessionId qnaSession (Just hostSecret_)
                                             |> InQnaSession
                                   }
                                 , Navigation.replaceUrl model.key (urlEncoder qnaSessionId)
@@ -946,7 +959,7 @@ view model =
                                             ]
 
                                     Nothing ->
-                                        questionInputView inQnaSession
+                                        questionInputView loaded.time inQnaSession
                                 ]
                     )
                 ]
@@ -986,14 +999,14 @@ hostView model inQnaSession hostState qnaSession =
     Element.column
         [ Element.width Element.fill, Element.spacing 12 ]
         [ copyHostUrlButton inQnaSession.copiedHostUrl
-        , Element.row
-            []
+        , Element.column
+            [ Element.spacing 8 ]
             [ dateTimeInput
                 { dateInputId = dateInputId
                 , timeInputId = timeInputId
                 , dateChanged = TypedClosingDate
                 , timeChanged = TypedClosingTime
-                , labelText = "How long do people have to ask questions?"
+                , labelText = "When should questions close?"
                 , minTime = model.time
                 , timezone = model.timezone
                 , dateText = hostState.closingDateText
@@ -1003,10 +1016,9 @@ hostView model inQnaSession hostState qnaSession =
                 }
             , case qnaSession.closingTime of
                 Just closingTime ->
-                    "Questions close in "
-                        ++ diffToString model.time closingTime
+                    closingText model.time closingTime
                         |> Element.text
-                        |> Element.el [ Element.centerY ]
+                        |> Element.el [ Element.centerY, Element.Font.size 16 ]
 
                 Nothing ->
                     Element.none
@@ -1047,6 +1059,16 @@ hostView model inQnaSession hostState qnaSession =
             , Element.text " to download them."
             ]
         ]
+
+
+closingText currentTime closingTime =
+    (if Time.posixToMillis closingTime > Time.posixToMillis currentTime then
+        "Questions close in "
+
+     else
+        "Questions closed "
+    )
+        ++ diffToString currentTime closingTime
 
 
 downloadQuestionsButtonId =
@@ -1110,8 +1132,8 @@ maxQuestionChars =
     200
 
 
-questionInputView : InQnaSession_ -> Element FrontendMsg
-questionInputView inQnaSession =
+questionInputView : Time.Posix -> InQnaSession_ -> Element FrontendMsg
+questionInputView time inQnaSession =
     Element.column
         [ Element.width Element.fill, Element.spacing 16 ]
         [ Element.el
@@ -1171,8 +1193,7 @@ questionInputView inQnaSession =
                 buttonStyle
                 { htmlId = createQuestionButtonId
                 , onPress = PressedCreateQuestion
-                , label =
-                    Element.text "Submit question"
+                , label = Element.text "Submit question"
                 }
             , case ( valiatedQuestion inQnaSession.question, inQnaSession.pressedCreateQuestion ) of
                 ( Err error, True ) ->
@@ -1181,7 +1202,12 @@ questionInputView inQnaSession =
                         [ Element.text error ]
 
                 _ ->
-                    Element.none
+                    case (Network.localState qnaSessionUpdate inQnaSession.networkModel).closingTime of
+                        Just closingTime ->
+                            Element.paragraph [] [ Element.text (closingText time closingTime) ]
+
+                        Nothing ->
+                            Element.none
             ]
         ]
 
@@ -1539,7 +1565,7 @@ formLabelAboveEl labelText =
     Element.el
         [ Element.paddingEach { top = 0, right = 0, bottom = 5, left = 0 }
         , Element.Font.medium
-        , Element.Font.size 13
+        , Element.Font.size 16
         ]
         (Element.paragraph [] [ Element.text labelText ])
 
@@ -1561,7 +1587,7 @@ timeInput htmlId onChange time isDisabled =
         ([ Html.Attributes.type_ "time"
          , Html.Events.onInput onChange
          , Html.Attributes.value time
-         , Html.Attributes.style "padding" "5px"
+         , Html.Attributes.style "padding" "0px 5px 0px 5px"
          , Dom.idToAttribute htmlId
          , Html.Attributes.disabled isDisabled
          ]
@@ -1594,7 +1620,7 @@ dateInput htmlId onChange minDateTime date isDisabled =
          , Html.Attributes.min (datestamp minDateTime)
          , Html.Events.onInput onChange
          , Html.Attributes.value date
-         , Html.Attributes.style "padding" "5px"
+         , Html.Attributes.style "padding" "0px 5px 0px 5px"
          , Dom.idToAttribute htmlId
          , Html.Attributes.disabled isDisabled
          ]
@@ -1629,13 +1655,6 @@ datestamp date =
         ++ String.padLeft 2 '0' (String.fromInt (Date.monthNumber date))
         ++ "-"
         ++ String.padLeft 2 '0' (String.fromInt (Date.day date))
-
-
-{-| Timestamp used by time input field.
--}
-timestamp : Int -> Int -> String
-timestamp hour minute =
-    String.padLeft 2 '0' (String.fromInt hour) ++ ":" ++ String.padLeft 2 '0' (String.fromInt minute)
 
 
 removeTrailing0s : Int -> Float -> String
@@ -1678,8 +1697,8 @@ dropSuffix suffix string =
         string
 
 
-validateDateTime : Effect.Time.Posix -> Effect.Time.Zone -> String -> String -> Result String Effect.Time.Posix
-validateDateTime currentTime timezone date time =
+validateDateTime : Effect.Time.Zone -> String -> String -> Result String Effect.Time.Posix
+validateDateTime timezone date time =
     if String.trim date == "" then
         Err "Date value missing"
 
@@ -1707,11 +1726,7 @@ validateDateTime currentTime timezone date time =
                                                 , millisecond = 0
                                                 }
                                     in
-                                    if Duration.from currentTime timePosix |> Quantity.lessThanZero then
-                                        Err "The event can't start in the past"
-
-                                    else
-                                        Ok timePosix
+                                    Ok timePosix
 
                                 _ ->
                                     Err "Invalid time format. Expected something like 22:59"

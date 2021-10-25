@@ -68,8 +68,8 @@ type alias HostState =
     }
 
 
-initInQnaSession : CryptographicKey QnaSessionId -> QnaSession -> Maybe (CryptographicKey HostSecret) -> InQnaSession_
-initInQnaSession qnaSessionId qnaSesssion hostStatus =
+initInQnaSession : Time.Zone -> CryptographicKey QnaSessionId -> QnaSession -> Maybe (CryptographicKey HostSecret) -> InQnaSession_
+initInQnaSession timezone qnaSessionId qnaSesssion hostStatus =
     { qnaSessionId = qnaSessionId
     , networkModel = Network.init qnaSesssion
     , question = ""
@@ -81,8 +81,20 @@ initInQnaSession qnaSessionId qnaSesssion hostStatus =
         case hostStatus of
             Just secret ->
                 { secret = secret
-                , closingDateText = ""
-                , closingTimeText = ""
+                , closingDateText =
+                    case qnaSesssion.closingTime of
+                        Just closingTime ->
+                            Date.fromPosix timezone closingTime |> Date.toIsoString
+
+                        Nothing ->
+                            ""
+                , closingTimeText =
+                    case qnaSesssion.closingTime of
+                        Just closingTime ->
+                            timestamp (Time.toHour timezone closingTime) (Time.toMinute timezone closingTime)
+
+                        Nothing ->
+                            ""
                 , showSettings = False
                 }
                     |> Just
@@ -90,6 +102,13 @@ initInQnaSession qnaSessionId qnaSesssion hostStatus =
             Nothing ->
                 Nothing
     }
+
+
+{-| Timestamp used by time input field.
+-}
+timestamp : Int -> Int -> String
+timestamp hour minute =
+    String.padLeft 2 '0' (String.fromInt hour) ++ ":" ++ String.padLeft 2 '0' (String.fromInt minute)
 
 
 type alias BackendModel =
