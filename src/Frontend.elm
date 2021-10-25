@@ -959,7 +959,18 @@ view model =
                                             ]
 
                                     Nothing ->
-                                        questionInputView loaded.time inQnaSession
+                                        if QnaSession.questionsClosed loaded.time qnaSession then
+                                            case (Network.localState qnaSessionUpdate inQnaSession.networkModel).closingTime of
+                                                Just closingTime ->
+                                                    Element.paragraph
+                                                        []
+                                                        [ Element.text (closingText loaded.time closingTime) ]
+
+                                                Nothing ->
+                                                    Element.none
+
+                                        else
+                                            questionInputView loaded.time inQnaSession qnaSession
                                 ]
                     )
                 ]
@@ -1132,8 +1143,8 @@ maxQuestionChars =
     200
 
 
-questionInputView : Time.Posix -> InQnaSession_ -> Element FrontendMsg
-questionInputView time inQnaSession =
+questionInputView : Time.Posix -> InQnaSession_ -> QnaSession -> Element FrontendMsg
+questionInputView time inQnaSession qnaSession =
     Element.column
         [ Element.width Element.fill, Element.spacing 16 ]
         [ Element.el
@@ -1202,7 +1213,7 @@ questionInputView time inQnaSession =
                         [ Element.text error ]
 
                 _ ->
-                    case (Network.localState qnaSessionUpdate inQnaSession.networkModel).closingTime of
+                    case qnaSession.closingTime of
                         Just closingTime ->
                             Element.paragraph [] [ Element.text (closingText time closingTime) ]
 

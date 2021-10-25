@@ -179,12 +179,7 @@ updateQnaSession_ sessionId clientId currentTime changeId localQnaMsg qnaSession
                     Types.getQuestionId qnaSession.questions userId
 
                 isTooLate =
-                    case qnaSession.closingTime of
-                        Just closingTime ->
-                            Time.posixToMillis closingTime < Time.posixToMillis currentTime
-
-                        Nothing ->
-                            False
+                    QnaSession.questionsClosed currentTime qnaSession
             in
             ( { qnaSession
                 | questions =

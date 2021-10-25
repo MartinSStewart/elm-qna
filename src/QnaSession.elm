@@ -45,6 +45,16 @@ init closingTime name =
     }
 
 
+questionsClosed : Time.Posix -> { a | closingTime : Maybe Time.Posix } -> Bool
+questionsClosed time qnaSession =
+    case qnaSession.closingTime of
+        Just closingTime ->
+            Time.posixToMillis closingTime < Time.posixToMillis time
+
+        Nothing ->
+            False
+
+
 initBackend : SessionId -> ClientId -> CryptographicKey HostSecret -> Time.Posix -> NonemptyString -> BackendQnaSession
 initBackend hostSessionId hostClientId hostSecret creationTime name =
     { questions = Dict.empty
