@@ -28,8 +28,6 @@ type alias FrontendLoaded =
     , remoteData : FrontendStatus
     , time : Time.Posix
     , timezone : Time.Zone
-    , closingDateText : String
-    , closingTimeText : String
     , lastConnectionCheck : Maybe Time.Posix
     , gotFirstConnectMsg : Bool
     }
@@ -58,7 +56,15 @@ type alias InQnaSession_ =
     , localChangeCounter : ChangeId
     , copiedHostUrl : Maybe Time.Posix
     , copiedUrl : Maybe Time.Posix
-    , isHost : Maybe (CryptographicKey HostSecret)
+    , isHost : Maybe HostState
+    }
+
+
+type alias HostState =
+    { secret : CryptographicKey HostSecret
+    , closingDateText : String
+    , closingTimeText : String
+    , showSettings : Bool
     }
 
 
@@ -71,7 +77,18 @@ initInQnaSession qnaSessionId qnaSesssion hostStatus =
     , localChangeCounter = Network.initChangeId
     , copiedHostUrl = Nothing
     , copiedUrl = Nothing
-    , isHost = hostStatus
+    , isHost =
+        case hostStatus of
+            Just secret ->
+                { secret = secret
+                , closingDateText = ""
+                , closingTimeText = ""
+                , showSettings = False
+                }
+                    |> Just
+
+            Nothing ->
+                Nothing
     }
 
 
@@ -95,6 +112,7 @@ type LocalQnaMsg
     | CreateQuestion Time.Posix NonemptyString
     | TogglePin QuestionId Time.Posix
     | DeleteQuestion QuestionId
+    | ChangeClosingTime Time.Posix
 
 
 type ConfirmLocalQnaMsg
@@ -102,6 +120,7 @@ type ConfirmLocalQnaMsg
     | CreateQuestionResponse Time.Posix
     | PinQuestionResponse Time.Posix
     | DeleteQuestionResponse
+    | ChangeClosingTimeResponse
 
 
 type ServerQnaMsg
@@ -110,6 +129,7 @@ type ServerQnaMsg
     | NewQuestion QuestionId Time.Posix NonemptyString
     | QuestionPinned QuestionId (Maybe Time.Posix)
     | QuestionDeleted QuestionId
+    | ClosingTimeChanged Time.Posix
 
 
 type FrontendMsg
@@ -131,6 +151,7 @@ type FrontendMsg
     | TextInputBlurred
     | TypedClosingDate String
     | TypedClosingTime String
+    | PressedToggleShowSettings
 
 
 type ToBackend

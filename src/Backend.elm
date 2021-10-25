@@ -291,6 +291,28 @@ updateQnaSession_ sessionId clientId currentTime changeId localQnaMsg qnaSession
             else
                 ( qnaSession, Command.none )
 
+        ChangeClosingTime closingTime ->
+            ( { qnaSession | closingTime = Just closingTime }
+            , Set.toList qnaSession.connections
+                |> List.map
+                    (\clientId_ ->
+                        if clientId == clientId_ then
+                            Effect.Lamdera.sendToFrontend
+                                clientId_
+                                (LocalConfirmQnaMsgResponse
+                                    qnaSessionId
+                                    changeId
+                                    ChangeClosingTimeResponse
+                                )
+
+                        else
+                            Effect.Lamdera.sendToFrontend
+                                clientId_
+                                (ServerMsgResponse qnaSessionId (ClosingTimeChanged closingTime))
+                    )
+                |> Command.batch
+            )
+
 
 addOrGetUserId : BackendQnaSession -> SessionId -> ClientId -> ( BackendQnaSession, UserId )
 addOrGetUserId qnaSession sessionId clientId =

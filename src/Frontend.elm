@@ -21,7 +21,7 @@ import AssocList as Dict exposing (Dict)
 import Browser exposing (UrlRequest(..))
 import Csv.Encode
 import Date exposing (Date)
-import Duration
+import Duration exposing (Duration)
 import Effect.Browser.Dom as Dom exposing (HtmlId)
 import Effect.Browser.Navigation as Navigation
 import Effect.Command as Command exposing (Command, FrontendOnly)
@@ -29,7 +29,7 @@ import Effect.File.Download
 import Effect.Lamdera
 import Effect.Subscription as Subscription exposing (Subscription)
 import Effect.Task as Task exposing (Task)
-import Effect.Time as Time
+import Effect.Time
 import Element exposing (Element)
 import Element.Background
 import Element.Border
@@ -52,8 +52,9 @@ import Simple.Animation as Animation exposing (Animation)
 import Simple.Animation.Animated as Animated
 import Simple.Animation.Property as Property
 import String.Nonempty as NonemptyString exposing (NonemptyString(..))
+import Time
 import Time.Extra as Time
-import Types exposing (ConfirmLocalQnaMsg(..), FrontendLoaded, FrontendLoading, FrontendModel(..), FrontendMsg(..), FrontendStatus(..), InQnaSession_, LocalQnaMsg(..), Route(..), ServerQnaMsg(..), ToBackend(..), ToFrontend(..))
+import Types exposing (ConfirmLocalQnaMsg(..), FrontendLoaded, FrontendLoading, FrontendModel(..), FrontendMsg(..), FrontendStatus(..), HostState, InQnaSession_, LocalQnaMsg(..), Route(..), ServerQnaMsg(..), ToBackend(..), ToFrontend(..))
 import Url exposing (Url)
 import Url.Parser exposing ((</>))
 
@@ -84,8 +85,8 @@ app_ =
 subscriptions : FrontendModel -> Subscription FrontendOnly FrontendMsg
 subscriptions _ =
     Subscription.batch
-        [ Time.every Duration.second GotCurrentTime
-        , Time.every (Duration.seconds 10) CheckIfConnected
+        [ Effect.Time.every Duration.second GotCurrentTime
+        , Effect.Time.every (Duration.seconds 10) CheckIfConnected
         ]
 
 
@@ -93,8 +94,8 @@ init : Url.Url -> Navigation.Key -> ( FrontendModel, Command FrontendOnly ToBack
 init url key =
     ( Loading { time = Nothing, timezone = Nothing, key = key, route = Url.Parser.parse urlDecoder url }
     , Command.batch
-        [ Task.perform GotCurrentTime Time.now
-        , Task.perform GotTimezone Time.here
+        [ Task.perform GotCurrentTime Effect.Time.now
+        , Task.perform GotTimezone Effect.Time.here
         ]
     )
 
@@ -123,8 +124,8 @@ initLoaded loading =
 
 
 qnaSessionRouteInit :
-    Time.Zone
-    -> Time.Posix
+    Effect.Time.Zone
+    -> Effect.Time.Posix
     -> Bool
     -> Navigation.Key
     -> CryptographicKey QnaSessionId
@@ -134,8 +135,6 @@ qnaSessionRouteInit timezone time gotFirstConnectMsg key qnaSessionId =
       , remoteData = LoadingQnaSession qnaSessionId
       , timezone = timezone
       , time = time
-      , closingDateText = ""
-      , closingTimeText = ""
       , lastConnectionCheck = Nothing
       , gotFirstConnectMsg = gotFirstConnectMsg
       }
@@ -144,8 +143,8 @@ qnaSessionRouteInit timezone time gotFirstConnectMsg key qnaSessionId =
 
 
 hostInviteRouteInit :
-    Time.Zone
-    -> Time.Posix
+    Effect.Time.Zone
+    -> Effect.Time.Posix
     -> Bool
     -> Navigation.Key
     -> CryptographicKey HostSecret
@@ -155,8 +154,6 @@ hostInviteRouteInit timezone time gotFirstConnectMsg key hostSecret =
       , remoteData = LoadingQnaSessionWithHostInvite hostSecret
       , timezone = timezone
       , time = time
-      , closingDateText = ""
-      , closingTimeText = ""
       , lastConnectionCheck = Nothing
       , gotFirstConnectMsg = gotFirstConnectMsg
       }
@@ -169,8 +166,6 @@ homepageRouteInit timezone time gotFirstConnectMsg key =
       , remoteData = Homepage
       , timezone = timezone
       , time = time
-      , closingDateText = ""
-      , closingTimeText = ""
       , lastConnectionCheck = Nothing
       , gotFirstConnectMsg = gotFirstConnectMsg
       }
@@ -343,7 +338,7 @@ updateLoaded msg model =
                             , fieldSeparator = ';'
                             }
                             (Dict.values (Network.localState qnaSessionUpdate inQnaSession.networkModel).questions
-                                |> List.sortBy (.creationTime >> Time.posixToMillis)
+                                |> List.sortBy (.creationTime >> Effect.Time.posixToMillis)
                             )
                         )
                     )
@@ -359,9 +354,9 @@ updateLoaded msg model =
             updateInQnaSession
                 (\inQnaSession ->
                     case inQnaSession.isHost of
-                        Just hostSecret ->
+                        Just { secret } ->
                             ( { inQnaSession | copiedHostUrl = Just model.time }
-                            , copyToClipboard ("https://" ++ hostSecretToUrl hostSecret)
+                            , copyToClipboard ("https://" ++ hostSecretToUrl secret)
                             )
 
                         Nothing ->
@@ -384,14 +379,55 @@ updateLoaded msg model =
         TextInputBlurred ->
             ( model, Command.none )
 
-        TypedClosingDate closingDate ->
-            ( { model | closingDateText = closingDate }, Command.none )
-
         GotTimezone timezone ->
             ( { model | timezone = timezone }, Command.none )
 
-        TypedClosingTime closingTime ->
-            ( { model | closingTimeText = closingTime }, Command.none )
+        TypedClosingDate closingDateText ->
+            updateInQnaSession
+                (setClosingTimeHelper model (\hostState -> { hostState | closingDateText = closingDateText }))
+                model
+
+        TypedClosingTime closingTimeText ->
+            updateInQnaSession
+                (setClosingTimeHelper model (\hostState -> { hostState | closingTimeText = closingTimeText }))
+                model
+
+        PressedToggleShowSettings ->
+            updateInQnaSession
+                (\qnaSession ->
+                    ( case qnaSession.isHost of
+                        Just hostState ->
+                            { qnaSession | isHost = Just { hostState | showSettings = not hostState.showSettings } }
+
+                        Nothing ->
+                            qnaSession
+                    , Command.none
+                    )
+                )
+                model
+
+
+setClosingTimeHelper :
+    FrontendLoaded
+    -> (HostState -> HostState)
+    -> InQnaSession_
+    -> ( InQnaSession_, Command FrontendOnly ToBackend FrontendMsg )
+setClosingTimeHelper model updateFunc qnaSession =
+    case qnaSession.isHost of
+        Just hostState ->
+            let
+                hostState2 =
+                    updateFunc hostState
+            in
+            case validateDateTime model.time model.timezone hostState2.closingDateText hostState2.closingTimeText of
+                Ok closingTime ->
+                    addLocalChange (ChangeClosingTime closingTime) { qnaSession | isHost = Just hostState2 }
+
+                Err _ ->
+                    ( qnaSession, Command.none )
+
+        Nothing ->
+            ( qnaSession, Command.none )
 
 
 hostSecretToUrl : CryptographicKey HostSecret -> String
@@ -439,24 +475,31 @@ scrollToOf millis id y =
         (\{ viewport } startTime ->
             Task.andThen
                 (step (Dom.setViewportOf id) millis viewport.y y startTime)
-                Time.now
+                Effect.Time.now
         )
         (Dom.getViewportOf id)
-        Time.now
+        Effect.Time.now
         |> Task.andThen identity
 
 
-step : (number -> Float -> Task.Task restriction x a) -> Int -> Float -> Float -> Time.Posix -> Time.Posix -> Task.Task restriction x a
+step :
+    (number -> Float -> Task.Task restriction x a)
+    -> Int
+    -> Float
+    -> Float
+    -> Effect.Time.Posix
+    -> Effect.Time.Posix
+    -> Task.Task restriction x a
 step f millis start end startTime now =
     let
         elapsed : Int
         elapsed =
-            Time.posixToMillis now - Time.posixToMillis startTime
+            Effect.Time.posixToMillis now - Effect.Time.posixToMillis startTime
     in
     f 0 (position millis start end elapsed)
         |> Task.andThen
             (if elapsed < millis then
-                \_ -> Time.now |> Task.andThen (step f millis start end startTime)
+                \_ -> Effect.Time.now |> Task.andThen (step f millis start end startTime)
 
              else
                 Task.succeed
@@ -497,7 +540,7 @@ toggleUpvote questionId qnaSession =
     }
 
 
-pinQuestion : QuestionId -> Time.Posix -> QnaSession -> QnaSession
+pinQuestion : QuestionId -> Effect.Time.Posix -> QnaSession -> QnaSession
 pinQuestion questionId currentTime qnaSession =
     { qnaSession
         | questions =
@@ -520,7 +563,7 @@ pinQuestion questionId currentTime qnaSession =
     }
 
 
-createQuestion : Time.Posix -> NonemptyString -> QnaSession -> QnaSession
+createQuestion : Effect.Time.Posix -> NonemptyString -> QnaSession -> QnaSession
 createQuestion creationTime content qnaSession =
     let
         questionId : QuestionId
@@ -546,6 +589,11 @@ deleteQuestion questionId qnaSession =
     { qnaSession | questions = Dict.remove questionId qnaSession.questions }
 
 
+changeClosingTime : Effect.Time.Posix -> QnaSession -> QnaSession
+changeClosingTime closingTime qnaSession =
+    { qnaSession | closingTime = Just closingTime }
+
+
 qnaSessionUpdate : Change LocalQnaMsg ConfirmLocalQnaMsg ServerQnaMsg -> QnaSession -> QnaSession
 qnaSessionUpdate msg qnaSession =
     case msg of
@@ -560,6 +608,9 @@ qnaSessionUpdate msg qnaSession =
 
         LocalChange _ (DeleteQuestion questionId) ->
             deleteQuestion questionId qnaSession
+
+        LocalChange _ (ChangeClosingTime closingTime) ->
+            changeClosingTime closingTime qnaSession
 
         ConfirmLocalChange _ localChange ToggleUpvoteResponse ->
             case localChange of
@@ -589,6 +640,14 @@ qnaSessionUpdate msg qnaSession =
             case localChange of
                 DeleteQuestion questionId ->
                     deleteQuestion questionId qnaSession
+
+                _ ->
+                    qnaSession
+
+        ConfirmLocalChange _ localChange ChangeClosingTimeResponse ->
+            case localChange of
+                ChangeClosingTime closingTime ->
+                    changeClosingTime closingTime qnaSession
 
                 _ ->
                     qnaSession
@@ -641,6 +700,9 @@ qnaSessionUpdate msg qnaSession =
 
         ServerChange (QuestionDeleted questionId) ->
             deleteQuestion questionId qnaSession
+
+        ServerChange (ClosingTimeChanged closingTime) ->
+            changeClosingTime closingTime qnaSession
 
 
 updateFromBackend : ToFrontend -> FrontendModel -> ( FrontendModel, Command FrontendOnly ToBackend FrontendMsg )
@@ -868,8 +930,20 @@ view model =
                                         qnaSession.questions
                                     ]
                                 , case inQnaSession.isHost of
-                                    Just _ ->
-                                        hostView loaded inQnaSession.copiedHostUrl qnaSession
+                                    Just hostState ->
+                                        Element.column
+                                            [ Element.width Element.fill, Element.spacing 8 ]
+                                            [ button (buttonStyle ++ [ Element.padding 8 ])
+                                                { htmlId = toggleShowSettingsId
+                                                , onPress = PressedToggleShowSettings
+                                                , label = Element.text "⚙️"
+                                                }
+                                            , if hostState.showSettings then
+                                                hostView loaded inQnaSession hostState qnaSession
+
+                                              else
+                                                Element.none
+                                            ]
 
                                     Nothing ->
                                         questionInputView inQnaSession
@@ -877,6 +951,11 @@ view model =
                     )
                 ]
     }
+
+
+toggleShowSettingsId : HtmlId
+toggleShowSettingsId =
+    Dom.id "toggleShowSettingsButton"
 
 
 notConnectedView : FrontendLoaded -> Element msg
@@ -902,11 +981,36 @@ notConnectedView model =
             Element.none
 
 
-hostView : FrontendLoaded -> Maybe Time.Posix -> QnaSession -> Element FrontendMsg
-hostView model copiedHostUrl qnaSession =
+hostView : FrontendLoaded -> InQnaSession_ -> HostState -> QnaSession -> Element FrontendMsg
+hostView model inQnaSession hostState qnaSession =
     Element.column
         [ Element.width Element.fill, Element.spacing 12 ]
-        [ copyHostUrlButton model.timezone model.time model.closingDateText model.closingTimeText copiedHostUrl
+        [ copyHostUrlButton inQnaSession.copiedHostUrl
+        , Element.row
+            []
+            [ dateTimeInput
+                { dateInputId = dateInputId
+                , timeInputId = timeInputId
+                , dateChanged = TypedClosingDate
+                , timeChanged = TypedClosingTime
+                , labelText = "How long do people have to ask questions?"
+                , minTime = model.time
+                , timezone = model.timezone
+                , dateText = hostState.closingDateText
+                , timeText = hostState.closingTimeText
+                , isDisabled = False
+                , maybeError = Nothing
+                }
+            , case qnaSession.closingTime of
+                Just closingTime ->
+                    "Questions close in "
+                        ++ diffToString model.time closingTime
+                        |> Element.text
+                        |> Element.el [ Element.centerY ]
+
+                Nothing ->
+                    Element.none
+            ]
         , animatedParagraph
             (Animation.fromTo
                 { duration = 2000, options = [] }
@@ -969,8 +1073,8 @@ timeInputId =
     Dom.id "timeInput"
 
 
-copyHostUrlButton : Time.Zone -> Time.Posix -> String -> String -> Maybe Time.Posix -> Element FrontendMsg
-copyHostUrlButton timezone time closingDateText closingTimeText copiedHostUrl =
+copyHostUrlButton : Maybe Effect.Time.Posix -> Element FrontendMsg
+copyHostUrlButton copiedHostUrl =
     Element.row
         [ Element.width Element.fill, Element.spacing 12, smallFont ]
         [ button
@@ -979,24 +1083,11 @@ copyHostUrlButton timezone time closingDateText closingTimeText copiedHostUrl =
             , onPress = PressedCopyHostUrl
             , label = Element.text "Add another host"
             }
-        , dateTimeInput
-            { dateInputId = dateInputId
-            , timeInputId = timeInputId
-            , dateChanged = TypedClosingDate
-            , timeChanged = TypedClosingTime
-            , labelText = "How long do people have to ask questions?"
-            , minTime = time
-            , timezone = timezone
-            , dateText = closingDateText
-            , timeText = closingTimeText
-            , isDisabled = False
-            , maybeError = Nothing
-            }
         , case copiedHostUrl of
             Just copiedTime ->
                 Element.Keyed.el
                     [ Element.width Element.fill ]
-                    ( Time.posixToMillis copiedTime |> String.fromInt
+                    ( Effect.Time.posixToMillis copiedTime |> String.fromInt
                     , animatedParagraph
                         (Animation.steps
                             { options = [], startAt = [ Property.opacity 0 ] }
@@ -1120,8 +1211,8 @@ errorColor =
 
 questionsView :
     CryptographicKey QnaSessionId
-    -> Maybe Time.Posix
-    -> Time.Posix
+    -> Maybe Effect.Time.Posix
+    -> Effect.Time.Posix
     -> Bool
     -> UserId
     -> Dict QuestionId Question
@@ -1145,7 +1236,7 @@ questionsView qnaSessionId maybeCopiedUrl currentTime isHost userId questions =
                     (\( questionId, question ) ->
                         question.isPinned |> Maybe.map (\pinTime -> ( questionId, pinTime, question ))
                     )
-                |> List.sortBy (\( _, pinTime, _ ) -> Time.posixToMillis pinTime)
+                |> List.sortBy (\( _, pinTime, _ ) -> Effect.Time.posixToMillis pinTime)
                 |> List.map
                     (\( questionId, _, question ) ->
                         keyedQuestion False True ( questionId, question )
@@ -1165,7 +1256,7 @@ questionsView qnaSessionId maybeCopiedUrl currentTime isHost userId questions =
                                 GT
 
                             EQ ->
-                                compare (Time.posixToMillis a.creationTime) (Time.posixToMillis b.creationTime)
+                                compare (Effect.Time.posixToMillis a.creationTime) (Effect.Time.posixToMillis b.creationTime)
                     )
                 |> List.indexedMap
                     (\index value ->
@@ -1195,7 +1286,7 @@ questionsView qnaSessionId maybeCopiedUrl currentTime isHost userId questions =
             |> Element.Keyed.column containerStyle
 
 
-emptyContainer : CryptographicKey QnaSessionId -> Bool -> Maybe Time.Posix -> List (Element FrontendMsg)
+emptyContainer : CryptographicKey QnaSessionId -> Bool -> Maybe Effect.Time.Posix -> List (Element FrontendMsg)
 emptyContainer qnaSessionId isHost maybeCopiedUrl =
     if isHost then
         [ Element.el [ Element.centerX, Element.Font.size 36 ] (Element.text "You are the host!")
@@ -1212,7 +1303,7 @@ emptyContainer qnaSessionId isHost maybeCopiedUrl =
                         Just copiedUrl ->
                             Element.Keyed.el
                                 []
-                                ( Time.posixToMillis copiedUrl |> String.fromInt
+                                ( Effect.Time.posixToMillis copiedUrl |> String.fromInt
                                 , animatedEl
                                     (Animation.steps
                                         { options = [], startAt = [ Property.opacity 0 ] }
@@ -1269,7 +1360,7 @@ animatedEl =
     animatedUi Element.el
 
 
-questionView : Bool -> Bool -> Time.Posix -> Bool -> UserId -> QuestionId -> Question -> Element FrontendMsg
+questionView : Bool -> Bool -> Effect.Time.Posix -> Bool -> UserId -> QuestionId -> Question -> Element FrontendMsg
 questionView isFirstUnpinnedQuestion isPinned time isHost userId questionId question =
     animatedRow
         (Animation.fromTo
@@ -1423,8 +1514,8 @@ dateTimeInput :
     , dateChanged : String -> msg
     , timeChanged : String -> msg
     , labelText : String
-    , minTime : Time.Posix
-    , timezone : Time.Zone
+    , minTime : Effect.Time.Posix
+    , timezone : Effect.Time.Zone
     , dateText : String
     , timeText : String
     , isDisabled : Bool
@@ -1489,11 +1580,11 @@ htmlInputBorderStyles =
     ]
 
 
-timeToString : Time.Zone -> Time.Posix -> String
+timeToString : Effect.Time.Zone -> Effect.Time.Posix -> String
 timeToString timezone time =
-    String.fromInt (Time.toHour timezone time)
+    String.fromInt (Effect.Time.toHour timezone time)
         ++ ":"
-        ++ String.padLeft 2 '0' (String.fromInt (Time.toMinute timezone time))
+        ++ String.padLeft 2 '0' (String.fromInt (Effect.Time.toMinute timezone time))
 
 
 dateInput : HtmlId -> (String -> msg) -> Date -> String -> Bool -> Element msg
@@ -1514,7 +1605,7 @@ dateInput htmlId onChange minDateTime date isDisabled =
         |> Element.el []
 
 
-datetimeToString : Time.Zone -> Time.Posix -> String
+datetimeToString : Effect.Time.Zone -> Effect.Time.Posix -> String
 datetimeToString timezone time =
     let
         offset =
@@ -1585,3 +1676,152 @@ dropSuffix suffix string =
 
     else
         string
+
+
+validateDateTime : Effect.Time.Posix -> Effect.Time.Zone -> String -> String -> Result String Effect.Time.Posix
+validateDateTime currentTime timezone date time =
+    if String.trim date == "" then
+        Err "Date value missing"
+
+    else
+        case String.split "-" date |> List.map String.toInt of
+            [ Just year, Just monthInt, Just day ] ->
+                case intToMonth monthInt of
+                    Just month ->
+                        if String.trim time == "" then
+                            Err "Time value missing"
+
+                        else
+                            case String.split ":" time |> List.map String.toInt of
+                                [ Just hour, Just minute ] ->
+                                    let
+                                        timePosix =
+                                            Time.partsToPosix
+                                                timezone
+                                                { year = year
+                                                , month = month
+                                                , day = day
+                                                , hour = hour
+                                                , minute = minute
+                                                , second = 0
+                                                , millisecond = 0
+                                                }
+                                    in
+                                    if Duration.from currentTime timePosix |> Quantity.lessThanZero then
+                                        Err "The event can't start in the past"
+
+                                    else
+                                        Ok timePosix
+
+                                _ ->
+                                    Err "Invalid time format. Expected something like 22:59"
+
+                    Nothing ->
+                        Err "Invalid date format. Expected something like 2020-01-31"
+
+            _ ->
+                Err "Invalid date format. Expected something like 2020-01-31"
+
+
+intToMonth : Int -> Maybe Time.Month
+intToMonth value =
+    case value of
+        1 ->
+            Just Time.Jan
+
+        2 ->
+            Just Time.Feb
+
+        3 ->
+            Just Time.Mar
+
+        4 ->
+            Just Time.Apr
+
+        5 ->
+            Just Time.May
+
+        6 ->
+            Just Time.Jun
+
+        7 ->
+            Just Time.Jul
+
+        8 ->
+            Just Time.Aug
+
+        9 ->
+            Just Time.Sep
+
+        10 ->
+            Just Time.Oct
+
+        11 ->
+            Just Time.Nov
+
+        12 ->
+            Just Time.Dec
+
+        _ ->
+            Nothing
+
+
+diffToString : Time.Posix -> Time.Posix -> String
+diffToString start end =
+    let
+        difference : Duration
+        difference =
+            Duration.from start end |> Quantity.abs
+
+        months =
+            Duration.inDays difference / 30 |> floor
+
+        weeks =
+            Duration.inWeeks difference |> floor
+
+        days =
+            Duration.inDays difference
+
+        hours =
+            Duration.inHours difference |> floor
+
+        minutes =
+            Duration.inMinutes difference |> round
+
+        suffix =
+            if Time.posixToMillis start <= Time.posixToMillis end then
+                ""
+
+            else
+                " ago"
+    in
+    if months >= 2 then
+        String.fromInt months ++ "\u{00A0}months" ++ suffix
+
+    else if weeks >= 2 then
+        String.fromInt weeks ++ "\u{00A0}weeks" ++ suffix
+
+    else if days > 1 then
+        removeTrailing0s 1 days ++ "\u{00A0}days" ++ suffix
+
+    else if days > 0.9 && days < 1.1 then
+        if Time.posixToMillis start <= Time.posixToMillis end then
+            "1\u{00A0}day"
+
+        else
+            "yesterday"
+
+    else if hours > 6 then
+        String.fromInt hours ++ "\u{00A0}hours" ++ suffix
+
+    else if Duration.inHours difference >= 1.2 then
+        removeTrailing0s 1 (Duration.inHours difference) ++ "\u{00A0}hours" ++ suffix
+
+    else if minutes > 1 then
+        String.fromInt minutes ++ "\u{00A0}minutes" ++ suffix
+
+    else if minutes == 1 then
+        "1\u{00A0}minute" ++ suffix
+
+    else
+        "now"
