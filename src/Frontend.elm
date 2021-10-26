@@ -1,16 +1,34 @@
-port module Frontend exposing (app, app_, copyHostUrlButtonId, copyUrlButtonId, createQnaSessionButtonId, createQuestionButtonId, deleteQuestionButtonId, domain, downloadQuestionsButtonId, init, qnaSessionUpdate, questionInputId, questionsViewId, subscriptions, togglePinButtonId, toggleUpvoteButtonId, update, updateFromBackend, view)
+port module Frontend exposing
+    ( app
+    , app_
+    , copyHostUrlButtonId
+    , copyUrlButtonId
+    , createQnaSessionButtonId
+    , createQuestionButtonId
+    , dateInputId
+    , deleteQuestionButtonId
+    , domain
+    , downloadQuestionsButtonId
+    , initLoaded
+    , qnaSessionUpdate
+    , questionInputId
+    , questionsViewId
+    , togglePinButtonId
+    , toggleUpvoteButtonId
+    )
 
 import AssocList as Dict exposing (Dict)
 import Browser exposing (UrlRequest(..))
 import Csv.Encode
-import Duration
+import Date exposing (Date)
+import Duration exposing (Duration)
 import Effect.Browser.Dom as Dom exposing (HtmlId)
-import Effect.Browser.Navigation
+import Effect.Browser.Navigation as Navigation
 import Effect.Command as Command exposing (Command, FrontendOnly)
 import Effect.File.Download
 import Effect.Lamdera
 import Effect.Subscription as Subscription exposing (Subscription)
-import Effect.Task exposing (Task)
+import Effect.Task as Task exposing (Task)
 import Effect.Time
 import Element exposing (Element)
 import Element.Background
@@ -29,22 +47,14 @@ import Network exposing (Change(..))
 import QnaSession exposing (QnaSession)
 import Quantity
 import Question exposing (Question, QuestionId(..))
+import Round
 import Simple.Animation as Animation exposing (Animation)
 import Simple.Animation.Animated as Animated
 import Simple.Animation.Property as Property
 import String.Nonempty as NonemptyString exposing (NonemptyString(..))
-import Types
-    exposing
-        ( ConfirmLocalQnaMsg(..)
-        , FrontendModel
-        , FrontendMsg(..)
-        , FrontendStatus(..)
-        , InQnaSession_
-        , LocalQnaMsg(..)
-        , ServerQnaMsg(..)
-        , ToBackend(..)
-        , ToFrontend(..)
-        )
+import Time
+import Time.Extra as Time
+import Types exposing (ConfirmLocalQnaMsg(..), FrontendLoaded, FrontendLoading, FrontendModel(..), FrontendMsg(..), FrontendStatus(..), HostState, InQnaSession_, LocalQnaMsg(..), Route(..), ServerQnaMsg(..), ToBackend(..), ToFrontend(..))
 import Url exposing (Url)
 import Url.Parser exposing ((</>))
 
@@ -80,31 +90,51 @@ subscriptions _ =
         ]
 
 
-init : Url.Url -> Effect.Browser.Navigation.Key -> ( FrontendModel, Command FrontendOnly ToBackend FrontendMsg )
+init : Url.Url -> Navigation.Key -> ( FrontendModel, Command FrontendOnly ToBackend FrontendMsg )
 init url key =
-    case Url.Parser.parse urlDecoder url of
-        Just (QnaSessionRoute qnaSessionId) ->
-            qnaSessionRouteInit False key qnaSessionId
+    ( Loading { time = Nothing, timezone = Nothing, key = key, route = Url.Parser.parse urlDecoder url }
+    , Command.batch
+        [ Task.perform GotCurrentTime Effect.Time.now
+        , Task.perform GotTimezone Effect.Time.here
+        ]
+    )
 
-        Just (HostInviteRoute hostSecret) ->
-            hostInviteRouteInit False key hostSecret
 
-        Just HomepageRoute ->
-            homepageRouteInit False key
+initLoaded : FrontendLoading -> ( FrontendModel, Command FrontendOnly ToBackend FrontendMsg )
+initLoaded loading =
+    Maybe.map2
+        (\timezone time ->
+            case loading.route of
+                Just (QnaSessionRoute qnaSessionId) ->
+                    qnaSessionRouteInit timezone time False loading.key qnaSessionId
 
-        Nothing ->
-            homepageRouteInit False key
+                Just (HostInviteRoute hostSecret) ->
+                    hostInviteRouteInit timezone time False loading.key hostSecret
+
+                Just HomepageRoute ->
+                    homepageRouteInit timezone time False loading.key
+
+                Nothing ->
+                    homepageRouteInit timezone time False loading.key
+        )
+        loading.timezone
+        loading.time
+        |> Maybe.map (Tuple.mapFirst Loaded)
+        |> Maybe.withDefault ( Loading loading, Command.none )
 
 
 qnaSessionRouteInit :
-    Bool
-    -> Effect.Browser.Navigation.Key
+    Effect.Time.Zone
+    -> Effect.Time.Posix
+    -> Bool
+    -> Navigation.Key
     -> CryptographicKey QnaSessionId
-    -> ( FrontendModel, Command FrontendOnly ToBackend FrontendMsg )
-qnaSessionRouteInit gotFirstConnectMsg key qnaSessionId =
+    -> ( FrontendLoaded, Command FrontendOnly ToBackend FrontendMsg )
+qnaSessionRouteInit timezone time gotFirstConnectMsg key qnaSessionId =
     ( { key = key
       , remoteData = LoadingQnaSession qnaSessionId
-      , currentTime = Nothing
+      , timezone = timezone
+      , time = time
       , lastConnectionCheck = Nothing
       , gotFirstConnectMsg = gotFirstConnectMsg
       }
@@ -113,14 +143,17 @@ qnaSessionRouteInit gotFirstConnectMsg key qnaSessionId =
 
 
 hostInviteRouteInit :
-    Bool
-    -> Effect.Browser.Navigation.Key
+    Effect.Time.Zone
+    -> Effect.Time.Posix
+    -> Bool
+    -> Navigation.Key
     -> CryptographicKey HostSecret
-    -> ( FrontendModel, Command FrontendOnly ToBackend FrontendMsg )
-hostInviteRouteInit gotFirstConnectMsg key hostSecret =
+    -> ( FrontendLoaded, Command FrontendOnly ToBackend FrontendMsg )
+hostInviteRouteInit timezone time gotFirstConnectMsg key hostSecret =
     ( { key = key
       , remoteData = LoadingQnaSessionWithHostInvite hostSecret
-      , currentTime = Nothing
+      , timezone = timezone
+      , time = time
       , lastConnectionCheck = Nothing
       , gotFirstConnectMsg = gotFirstConnectMsg
       }
@@ -128,21 +161,16 @@ hostInviteRouteInit gotFirstConnectMsg key hostSecret =
     )
 
 
-homepageRouteInit gotFirstConnectMsg key =
+homepageRouteInit timezone time gotFirstConnectMsg key =
     ( { key = key
       , remoteData = Homepage
-      , currentTime = Nothing
+      , timezone = timezone
+      , time = time
       , lastConnectionCheck = Nothing
       , gotFirstConnectMsg = gotFirstConnectMsg
       }
     , Command.none
     )
-
-
-type Route
-    = HomepageRoute
-    | HostInviteRoute (CryptographicKey HostSecret)
-    | QnaSessionRoute (CryptographicKey QnaSessionId)
 
 
 urlDecoder : Url.Parser.Parser (Route -> c) c
@@ -161,23 +189,41 @@ urlEncoder (CryptographicKey qnaSessionId) =
 
 update : FrontendMsg -> FrontendModel -> ( FrontendModel, Command FrontendOnly ToBackend FrontendMsg )
 update msg model =
+    case model of
+        Loading loading ->
+            case msg of
+                GotCurrentTime time ->
+                    { loading | time = Just time } |> initLoaded
+
+                GotTimezone timezone ->
+                    { loading | timezone = Just timezone } |> initLoaded
+
+                _ ->
+                    ( model, Command.none )
+
+        Loaded loaded ->
+            updateLoaded msg loaded |> Tuple.mapFirst Loaded
+
+
+updateLoaded : FrontendMsg -> FrontendLoaded -> ( FrontendLoaded, Command FrontendOnly ToBackend FrontendMsg )
+updateLoaded msg model =
     case msg of
         UrlClicked urlRequest ->
             case urlRequest of
                 Browser.Internal url ->
                     ( model
-                    , Effect.Browser.Navigation.pushUrl model.key (Url.toString url)
+                    , Navigation.pushUrl model.key (Url.toString url)
                     )
 
                 Browser.External url ->
                     ( model
-                    , Effect.Browser.Navigation.load url
+                    , Navigation.load url
                     )
 
         UrlChanged url ->
             case Url.Parser.parse urlDecoder url of
                 Just HomepageRoute ->
-                    ( model, Effect.Browser.Navigation.load "/" )
+                    ( model, Navigation.load "/" )
 
                 Just (QnaSessionRoute qnaSessionId) ->
                     case model.remoteData of
@@ -186,10 +232,10 @@ update msg model =
                                 ( model, Command.none )
 
                             else
-                                ( model, Effect.Browser.Navigation.load (urlEncoder qnaSessionId) )
+                                ( model, Navigation.load (urlEncoder qnaSessionId) )
 
                         _ ->
-                            ( model, Effect.Browser.Navigation.load (urlEncoder qnaSessionId) )
+                            ( model, Navigation.load (urlEncoder qnaSessionId) )
 
                 _ ->
                     ( model, Command.none )
@@ -219,7 +265,7 @@ update msg model =
                         Ok nonempty ->
                             let
                                 localMsg =
-                                    CreateQuestion (Maybe.withDefault (Effect.Time.millisToPosix 0) model.currentTime) nonempty
+                                    CreateQuestion model.time nonempty
                             in
                             ( { inQnaSession
                                 | networkModel =
@@ -235,13 +281,12 @@ update msg model =
                                 [ Effect.Lamdera.sendToBackend
                                     (LocalMsgRequest inQnaSession.qnaSessionId inQnaSession.localChangeCounter localMsg)
                                 , Dom.getViewportOf questionsViewId
-                                    |> Effect.Task.andThen
+                                    |> Task.andThen
                                         (\{ scene, viewport } ->
                                             scrollToOf 200 questionsViewId (scene.height - viewport.height)
                                         )
-                                    |> Effect.Task.attempt (\_ -> NoOpFrontendMsg)
-                                , Dom.blur questionInputId
-                                    |> Effect.Task.attempt (\_ -> TextInputBlurred)
+                                    |> Task.attempt (\_ -> NoOpFrontendMsg)
+                                , Dom.blur questionInputId |> Task.attempt (\_ -> TextInputBlurred)
                                 ]
                             )
 
@@ -257,19 +302,12 @@ update msg model =
 
         PressedTogglePin questionId ->
             updateInQnaSession
-                (let
-                    localMsg =
-                        TogglePin
-                            questionId
-                            (Maybe.withDefault (Effect.Time.millisToPosix 0) model.currentTime)
-                 in
-                 addLocalChange localMsg
-                )
+                (addLocalChange (TogglePin questionId model.time))
                 model
 
         GotCurrentTime currentTime ->
             ( { model
-                | currentTime = Just currentTime
+                | time = currentTime
                 , lastConnectionCheck = Maybe.withDefault currentTime model.lastConnectionCheck |> Just
               }
             , Command.none
@@ -316,9 +354,9 @@ update msg model =
             updateInQnaSession
                 (\inQnaSession ->
                     case inQnaSession.isHost of
-                        Just hostSecret ->
-                            ( { inQnaSession | copiedHostUrl = model.currentTime }
-                            , copyToClipboard ("https://" ++ hostSecretToUrl hostSecret)
+                        Just { secret } ->
+                            ( { inQnaSession | copiedHostUrl = Just model.time }
+                            , copyToClipboard ("https://" ++ hostSecretToUrl secret)
                             )
 
                         Nothing ->
@@ -329,7 +367,7 @@ update msg model =
         PressedCopyUrl ->
             updateInQnaSession
                 (\inQnaSession ->
-                    ( { inQnaSession | copiedUrl = model.currentTime }
+                    ( { inQnaSession | copiedUrl = Just model.time }
                     , copyToClipboard ("https://" ++ domain ++ urlEncoder inQnaSession.qnaSessionId)
                     )
                 )
@@ -340,6 +378,56 @@ update msg model =
 
         TextInputBlurred ->
             ( model, Command.none )
+
+        GotTimezone timezone ->
+            ( { model | timezone = timezone }, Command.none )
+
+        TypedClosingDate closingDateText ->
+            updateInQnaSession
+                (setClosingTimeHelper model (\hostState -> { hostState | closingDateText = closingDateText }))
+                model
+
+        TypedClosingTime closingTimeText ->
+            updateInQnaSession
+                (setClosingTimeHelper model (\hostState -> { hostState | closingTimeText = closingTimeText }))
+                model
+
+        PressedToggleShowSettings ->
+            updateInQnaSession
+                (\qnaSession ->
+                    ( case qnaSession.isHost of
+                        Just hostState ->
+                            { qnaSession | isHost = Just { hostState | showSettings = not hostState.showSettings } }
+
+                        Nothing ->
+                            qnaSession
+                    , Command.none
+                    )
+                )
+                model
+
+
+setClosingTimeHelper :
+    FrontendLoaded
+    -> (HostState -> HostState)
+    -> InQnaSession_
+    -> ( InQnaSession_, Command FrontendOnly ToBackend FrontendMsg )
+setClosingTimeHelper model updateFunc qnaSession =
+    case qnaSession.isHost of
+        Just hostState ->
+            let
+                hostState2 =
+                    updateFunc hostState
+            in
+            case validateDateTime model.timezone hostState2.closingDateText hostState2.closingTimeText of
+                Ok closingTime ->
+                    addLocalChange (ChangeClosingTime closingTime) { qnaSession | isHost = Just hostState2 }
+
+                Err _ ->
+                    ( { qnaSession | isHost = Just hostState2 }, Command.none )
+
+        Nothing ->
+            ( qnaSession, Command.none )
 
 
 hostSecretToUrl : CryptographicKey HostSecret -> String
@@ -381,20 +469,27 @@ questionInputId =
     Dom.id "question-input-id"
 
 
-scrollToOf : Int -> HtmlId -> Float -> Effect.Task.Task FrontendOnly Dom.Error ()
+scrollToOf : Int -> HtmlId -> Float -> Task.Task FrontendOnly Dom.Error ()
 scrollToOf millis id y =
-    Effect.Task.map2
+    Task.map2
         (\{ viewport } startTime ->
-            Effect.Task.andThen
+            Task.andThen
                 (step (Dom.setViewportOf id) millis viewport.y y startTime)
                 Effect.Time.now
         )
         (Dom.getViewportOf id)
         Effect.Time.now
-        |> Effect.Task.andThen identity
+        |> Task.andThen identity
 
 
-step : (number -> Float -> Effect.Task.Task restriction x a) -> Int -> Float -> Float -> Effect.Time.Posix -> Effect.Time.Posix -> Effect.Task.Task restriction x a
+step :
+    (number -> Float -> Task.Task restriction x a)
+    -> Int
+    -> Float
+    -> Float
+    -> Effect.Time.Posix
+    -> Effect.Time.Posix
+    -> Task.Task restriction x a
 step f millis start end startTime now =
     let
         elapsed : Int
@@ -402,12 +497,12 @@ step f millis start end startTime now =
             Effect.Time.posixToMillis now - Effect.Time.posixToMillis startTime
     in
     f 0 (position millis start end elapsed)
-        |> Effect.Task.andThen
+        |> Task.andThen
             (if elapsed < millis then
-                \_ -> Effect.Time.now |> Effect.Task.andThen (step f millis start end startTime)
+                \_ -> Effect.Time.now |> Task.andThen (step f millis start end startTime)
 
              else
-                Effect.Task.succeed
+                Task.succeed
             )
 
 
@@ -422,8 +517,8 @@ position millis start end elapsed =
 
 updateInQnaSession :
     (InQnaSession_ -> ( InQnaSession_, Command FrontendOnly ToBackend FrontendMsg ))
-    -> FrontendModel
-    -> ( FrontendModel, Command FrontendOnly ToBackend FrontendMsg )
+    -> FrontendLoaded
+    -> ( FrontendLoaded, Command FrontendOnly ToBackend FrontendMsg )
 updateInQnaSession updateFunc model =
     case model.remoteData of
         InQnaSession inQnaSession ->
@@ -474,24 +569,41 @@ createQuestion creationTime content qnaSession =
         questionId : QuestionId
         questionId =
             Types.getQuestionId qnaSession.questions qnaSession.userId
+
+        isTooLate =
+            case qnaSession.closingTime of
+                Just closingTime ->
+                    Time.posixToMillis closingTime < Time.posixToMillis creationTime
+
+                Nothing ->
+                    False
     in
     { qnaSession
         | questions =
-            Dict.insert
-                questionId
-                { creationTime = creationTime
-                , content = content
-                , isPinned = Nothing
-                , otherVotes = 0
-                , isUpvoted = False
-                }
+            if isTooLate then
                 qnaSession.questions
+
+            else
+                Dict.insert
+                    questionId
+                    { creationTime = creationTime
+                    , content = content
+                    , isPinned = Nothing
+                    , otherVotes = 0
+                    , isUpvoted = False
+                    }
+                    qnaSession.questions
     }
 
 
 deleteQuestion : QuestionId -> QnaSession -> QnaSession
 deleteQuestion questionId qnaSession =
     { qnaSession | questions = Dict.remove questionId qnaSession.questions }
+
+
+changeClosingTime : Effect.Time.Posix -> QnaSession -> QnaSession
+changeClosingTime closingTime qnaSession =
+    { qnaSession | closingTime = Just closingTime }
 
 
 qnaSessionUpdate : Change LocalQnaMsg ConfirmLocalQnaMsg ServerQnaMsg -> QnaSession -> QnaSession
@@ -508,6 +620,9 @@ qnaSessionUpdate msg qnaSession =
 
         LocalChange _ (DeleteQuestion questionId) ->
             deleteQuestion questionId qnaSession
+
+        LocalChange _ (ChangeClosingTime closingTime) ->
+            changeClosingTime closingTime qnaSession
 
         ConfirmLocalChange _ localChange ToggleUpvoteResponse ->
             case localChange of
@@ -537,6 +652,14 @@ qnaSessionUpdate msg qnaSession =
             case localChange of
                 DeleteQuestion questionId ->
                     deleteQuestion questionId qnaSession
+
+                _ ->
+                    qnaSession
+
+        ConfirmLocalChange _ localChange ChangeClosingTimeResponse ->
+            case localChange of
+                ChangeClosingTime closingTime ->
+                    changeClosingTime closingTime qnaSession
 
                 _ ->
                     qnaSession
@@ -590,9 +713,22 @@ qnaSessionUpdate msg qnaSession =
         ServerChange (QuestionDeleted questionId) ->
             deleteQuestion questionId qnaSession
 
+        ServerChange (ClosingTimeChanged closingTime) ->
+            changeClosingTime closingTime qnaSession
+
 
 updateFromBackend : ToFrontend -> FrontendModel -> ( FrontendModel, Command FrontendOnly ToBackend FrontendMsg )
 updateFromBackend msg model =
+    case model of
+        Loading _ ->
+            ( model, Command.none )
+
+        Loaded loaded ->
+            updateLoadedFromBackend msg loaded |> Tuple.mapFirst Loaded
+
+
+updateLoadedFromBackend : ToFrontend -> FrontendLoaded -> ( FrontendLoaded, Command FrontendOnly ToBackend FrontendMsg )
+updateLoadedFromBackend msg model =
     case msg of
         ServerMsgResponse qnaSessionId serverQnaMsg ->
             updateInQnaSession
@@ -638,7 +774,7 @@ updateFromBackend msg model =
                             | remoteData =
                                 case result of
                                     Ok { isHost, qnaSession } ->
-                                        InQnaSession (Types.initInQnaSession qnaSessionId qnaSession isHost)
+                                        InQnaSession (Types.initInQnaSession model.timezone qnaSessionId qnaSession isHost)
 
                                     Err () ->
                                         LoadingQnaSessionFailed ()
@@ -659,12 +795,13 @@ updateFromBackend msg model =
                         | remoteData =
                             InQnaSession
                                 (Types.initInQnaSession
+                                    model.timezone
                                     qnaSessionId
-                                    (QnaSession.init qnaSessionName)
+                                    (QnaSession.init Nothing qnaSessionName)
                                     (Just hostSecret)
                                 )
                       }
-                    , Effect.Browser.Navigation.pushUrl model.key (urlEncoder qnaSessionId)
+                    , Navigation.pushUrl model.key (urlEncoder qnaSessionId)
                     )
 
                 _ ->
@@ -678,10 +815,10 @@ updateFromBackend msg model =
                             Ok ( qnaSessionId, qnaSession ) ->
                                 ( { model
                                     | remoteData =
-                                        Types.initInQnaSession qnaSessionId qnaSession (Just hostSecret_)
+                                        Types.initInQnaSession model.timezone qnaSessionId qnaSession (Just hostSecret_)
                                             |> InQnaSession
                                   }
-                                , Effect.Browser.Navigation.replaceUrl model.key (urlEncoder qnaSessionId)
+                                , Navigation.replaceUrl model.key (urlEncoder qnaSessionId)
                                 )
 
                             Err () ->
@@ -694,7 +831,7 @@ updateFromBackend msg model =
                     ( model, Command.none )
 
         CheckIfConnectedResponse ->
-            ( { model | lastConnectionCheck = model.currentTime }
+            ( { model | lastConnectionCheck = Just model.time }
             , Command.none
             )
 
@@ -702,22 +839,22 @@ updateFromBackend msg model =
             if model.gotFirstConnectMsg then
                 case model.remoteData of
                     Homepage ->
-                        homepageRouteInit True model.key
+                        homepageRouteInit model.timezone model.time True model.key
 
                     LoadingQnaSession qnaSessionId ->
-                        qnaSessionRouteInit True model.key qnaSessionId
+                        qnaSessionRouteInit model.timezone model.time True model.key qnaSessionId
 
                     LoadingQnaSessionWithHostInvite hostSecret ->
-                        hostInviteRouteInit True model.key hostSecret
+                        hostInviteRouteInit model.timezone model.time True model.key hostSecret
 
                     CreatingQnaSession _ ->
-                        homepageRouteInit True model.key
+                        homepageRouteInit model.timezone model.time True model.key
 
                     LoadingQnaSessionFailed () ->
-                        homepageRouteInit True model.key
+                        homepageRouteInit model.timezone model.time True model.key
 
                     InQnaSession inQnaSession_ ->
-                        qnaSessionRouteInit True model.key inQnaSession_.qnaSessionId
+                        qnaSessionRouteInit model.timezone model.time True model.key inQnaSession_.qnaSessionId
 
             else
                 ( { model | gotFirstConnectMsg = True }, Command.none )
@@ -744,80 +881,113 @@ view : FrontendModel -> { title : String, body : List (Html FrontendMsg) }
 view model =
     { title = "Q&A"
     , body =
-        [ Element.layout
-            [ Element.inFront (notConnectedView model) ]
-            (case model.remoteData of
-                Homepage ->
-                    Element.column
-                        [ Element.centerX, Element.centerY, Element.spacing 16, Element.paddingXY 16 0 ]
-                        [ Element.paragraph
-                            [ Element.centerX ]
-                            [ Element.text "To join a Q&A session, please use the link your host has provided." ]
-                        , Element.el [ Element.Font.size 24, Element.centerX ] (Element.text "OR")
-                        , button
-                            (Element.centerX :: buttonStyle)
-                            { htmlId = createQnaSessionButtonId
-                            , onPress = PressedCreateQnaSession
-                            , label = Element.paragraph [] [ Element.text "Create a new Q&A session" ]
-                            }
-                        ]
+        case model of
+            Loading _ ->
+                []
 
-                LoadingQnaSessionWithHostInvite _ ->
-                    Element.el [ Element.centerX, Element.centerY ] (Element.text "Loading...")
+            Loaded loaded ->
+                [ Element.layout
+                    [ Element.inFront (notConnectedView loaded) ]
+                    (case loaded.remoteData of
+                        Homepage ->
+                            Element.column
+                                [ Element.centerX, Element.centerY, Element.spacing 16, Element.paddingXY 16 0 ]
+                                [ Element.paragraph
+                                    [ Element.centerX ]
+                                    [ Element.text "To join a Q&A session, please use the link your host has provided." ]
+                                , Element.el [ Element.Font.size 24, Element.centerX ] (Element.text "OR")
+                                , button
+                                    (Element.centerX :: buttonStyle)
+                                    { htmlId = createQnaSessionButtonId
+                                    , onPress = PressedCreateQnaSession
+                                    , label = Element.paragraph [] [ Element.text "Create a new Q&A session" ]
+                                    }
+                                ]
 
-                LoadingQnaSession _ ->
-                    Element.el [ Element.centerX, Element.centerY ] (Element.text "Loading...")
+                        LoadingQnaSessionWithHostInvite _ ->
+                            Element.el [ Element.centerX, Element.centerY ] (Element.text "Loading...")
 
-                CreatingQnaSession _ ->
-                    Element.el [ Element.centerX, Element.centerY ] (Element.text "Creating...")
+                        LoadingQnaSession _ ->
+                            Element.el [ Element.centerX, Element.centerY ] (Element.text "Loading...")
 
-                LoadingQnaSessionFailed () ->
-                    Element.paragraph
-                        [ Element.Font.center, Element.centerY, Element.padding 8 ]
-                        [ Element.text "Sorry, this Q&A session doesn't exist." ]
+                        CreatingQnaSession _ ->
+                            Element.el [ Element.centerX, Element.centerY ] (Element.text "Creating...")
 
-                InQnaSession inQnaSession ->
-                    let
-                        qnaSession : QnaSession
-                        qnaSession =
-                            Network.localState qnaSessionUpdate inQnaSession.networkModel
-                    in
-                    Element.column
-                        [ Element.spacing 16
-                        , Element.width <| Element.maximum 800 Element.fill
-                        , Element.centerX
-                        , Element.paddingXY 16 16
-                        , Element.height Element.fill
-                        ]
-                        [ Element.column
-                            [ Element.width Element.fill, Element.height Element.fill, Element.spacing 6 ]
-                            [ Element.text "Questions"
-                            , questionsView
-                                inQnaSession.qnaSessionId
-                                inQnaSession.copiedUrl
-                                model.currentTime
-                                (inQnaSession.isHost /= Nothing)
-                                qnaSession.userId
-                                qnaSession.questions
-                            ]
-                        , case inQnaSession.isHost of
-                            Just _ ->
-                                hostView inQnaSession.copiedHostUrl qnaSession
+                        LoadingQnaSessionFailed () ->
+                            Element.paragraph
+                                [ Element.Font.center, Element.centerY, Element.padding 8 ]
+                                [ Element.text "Sorry, this Q&A session doesn't exist." ]
 
-                            Nothing ->
-                                questionInputView inQnaSession
-                        ]
-            )
-        ]
+                        InQnaSession inQnaSession ->
+                            let
+                                qnaSession : QnaSession
+                                qnaSession =
+                                    Network.localState qnaSessionUpdate inQnaSession.networkModel
+                            in
+                            Element.column
+                                [ Element.spacing 16
+                                , Element.width <| Element.maximum 800 Element.fill
+                                , Element.centerX
+                                , Element.paddingXY 16 16
+                                , Element.height Element.fill
+                                ]
+                                [ Element.column
+                                    [ Element.width Element.fill, Element.height Element.fill, Element.spacing 6 ]
+                                    [ Element.text "Questions"
+                                    , questionsView
+                                        inQnaSession.qnaSessionId
+                                        inQnaSession.copiedUrl
+                                        loaded.time
+                                        (inQnaSession.isHost /= Nothing)
+                                        qnaSession.userId
+                                        qnaSession.questions
+                                    ]
+                                , case inQnaSession.isHost of
+                                    Just hostState ->
+                                        Element.column
+                                            [ Element.width Element.fill, Element.spacing 8 ]
+                                            [ button (buttonStyle ++ [ Element.padding 8 ])
+                                                { htmlId = toggleShowSettingsId
+                                                , onPress = PressedToggleShowSettings
+                                                , label = Element.text "⚙️"
+                                                }
+                                            , if hostState.showSettings then
+                                                hostView loaded inQnaSession hostState qnaSession
+
+                                              else
+                                                Element.none
+                                            ]
+
+                                    Nothing ->
+                                        if QnaSession.questionsClosed loaded.time qnaSession then
+                                            case (Network.localState qnaSessionUpdate inQnaSession.networkModel).closingTime of
+                                                Just closingTime ->
+                                                    Element.paragraph
+                                                        []
+                                                        [ Element.text (closingText loaded.time closingTime) ]
+
+                                                Nothing ->
+                                                    Element.none
+
+                                        else
+                                            questionInputView loaded.time inQnaSession qnaSession
+                                ]
+                    )
+                ]
     }
 
 
-notConnectedView : FrontendModel -> Element msg
+toggleShowSettingsId : HtmlId
+toggleShowSettingsId =
+    Dom.id "toggleShowSettingsButton"
+
+
+notConnectedView : FrontendLoaded -> Element msg
 notConnectedView model =
-    case ( model.lastConnectionCheck, model.currentTime ) of
-        ( Just lastCheck, Just currentTime ) ->
+    case model.lastConnectionCheck of
+        Just lastCheck ->
             if
-                Duration.from lastCheck currentTime
+                Duration.from lastCheck model.time
                     |> Quantity.lessThan (Duration.seconds 30)
             then
                 Element.none
@@ -831,15 +1001,39 @@ notConnectedView model =
                     ]
                     [ Element.text "I can't reach the server! Try refreshing the page?" ]
 
-        _ ->
+        Nothing ->
             Element.none
 
 
-hostView : Maybe Effect.Time.Posix -> QnaSession -> Element FrontendMsg
-hostView copiedHostUrl qnaSession =
+hostView : FrontendLoaded -> InQnaSession_ -> HostState -> QnaSession -> Element FrontendMsg
+hostView model inQnaSession hostState qnaSession =
     Element.column
         [ Element.width Element.fill, Element.spacing 12 ]
-        [ copyHostUrlButton copiedHostUrl
+        [ copyHostUrlButton inQnaSession.copiedHostUrl
+        , Element.column
+            [ Element.spacing 8 ]
+            [ dateTimeInput
+                { dateInputId = dateInputId
+                , timeInputId = timeInputId
+                , dateChanged = TypedClosingDate
+                , timeChanged = TypedClosingTime
+                , labelText = "When should questions close?"
+                , minTime = model.time
+                , timezone = model.timezone
+                , dateText = hostState.closingDateText
+                , timeText = hostState.closingTimeText
+                , isDisabled = False
+                , maybeError = Nothing
+                }
+            , case qnaSession.closingTime of
+                Just closingTime ->
+                    closingText model.time closingTime
+                        |> Element.text
+                        |> Element.el [ Element.centerY, Element.Font.size 16 ]
+
+                Nothing ->
+                    Element.none
+            ]
         , animatedParagraph
             (Animation.fromTo
                 { duration = 2000, options = [] }
@@ -878,6 +1072,16 @@ hostView copiedHostUrl qnaSession =
         ]
 
 
+closingText currentTime closingTime =
+    (if Time.posixToMillis closingTime > Time.posixToMillis currentTime then
+        "Questions close in "
+
+     else
+        "Questions closed "
+    )
+        ++ diffToString currentTime closingTime
+
+
 downloadQuestionsButtonId =
     Dom.id "downloadQuestionsButton"
 
@@ -887,8 +1091,19 @@ smallFont =
     Element.Font.size 16
 
 
+copyHostUrlButtonId : HtmlId
 copyHostUrlButtonId =
     Dom.id "copyHostUrlButton"
+
+
+dateInputId : HtmlId
+dateInputId =
+    Dom.id "dateInput"
+
+
+timeInputId : HtmlId
+timeInputId =
+    Dom.id "timeInput"
 
 
 copyHostUrlButton : Maybe Effect.Time.Posix -> Element FrontendMsg
@@ -928,8 +1143,8 @@ maxQuestionChars =
     200
 
 
-questionInputView : InQnaSession_ -> Element FrontendMsg
-questionInputView inQnaSession =
+questionInputView : Time.Posix -> InQnaSession_ -> QnaSession -> Element FrontendMsg
+questionInputView time inQnaSession qnaSession =
     Element.column
         [ Element.width Element.fill, Element.spacing 16 ]
         [ Element.el
@@ -989,8 +1204,7 @@ questionInputView inQnaSession =
                 buttonStyle
                 { htmlId = createQuestionButtonId
                 , onPress = PressedCreateQuestion
-                , label =
-                    Element.text "Submit question"
+                , label = Element.text "Submit question"
                 }
             , case ( valiatedQuestion inQnaSession.question, inQnaSession.pressedCreateQuestion ) of
                 ( Err error, True ) ->
@@ -999,7 +1213,12 @@ questionInputView inQnaSession =
                         [ Element.text error ]
 
                 _ ->
-                    Element.none
+                    case qnaSession.closingTime of
+                        Just closingTime ->
+                            Element.paragraph [] [ Element.text (closingText time closingTime) ]
+
+                        Nothing ->
+                            Element.none
             ]
         ]
 
@@ -1030,7 +1249,7 @@ errorColor =
 questionsView :
     CryptographicKey QnaSessionId
     -> Maybe Effect.Time.Posix
-    -> Maybe Effect.Time.Posix
+    -> Effect.Time.Posix
     -> Bool
     -> UserId
     -> Dict QuestionId Question
@@ -1178,18 +1397,14 @@ animatedEl =
     animatedUi Element.el
 
 
-questionView : Bool -> Bool -> Maybe Effect.Time.Posix -> Bool -> UserId -> QuestionId -> Question -> Element FrontendMsg
-questionView isFirstUnpinnedQuestion isPinned currentTime isHost userId questionId question =
+questionView : Bool -> Bool -> Effect.Time.Posix -> Bool -> UserId -> QuestionId -> Question -> Element FrontendMsg
+questionView isFirstUnpinnedQuestion isPinned time isHost userId questionId question =
     animatedRow
         (Animation.fromTo
             { duration = 1500, options = [] }
             [ Property.backgroundColor
                 (if question.isPinned == Nothing then
-                    if
-                        currentTime
-                            |> Maybe.map (\time -> Question.isNewQuestion time question)
-                            |> Maybe.withDefault False
-                    then
+                    if Question.isNewQuestion time question then
                         "lightgreen"
 
                     else
@@ -1328,3 +1543,311 @@ buttonStyle =
     , Element.padding 16
     , Element.Border.rounded 4
     ]
+
+
+dateTimeInput :
+    { dateInputId : HtmlId
+    , timeInputId : HtmlId
+    , dateChanged : String -> msg
+    , timeChanged : String -> msg
+    , labelText : String
+    , minTime : Effect.Time.Posix
+    , timezone : Effect.Time.Zone
+    , dateText : String
+    , timeText : String
+    , isDisabled : Bool
+    , maybeError : Maybe String
+    }
+    -> Element msg
+dateTimeInput config =
+    Element.column
+        [ Element.spacing 4 ]
+        [ formLabelAboveEl config.labelText
+        , Element.row [ Element.spacing 8, Element.width Element.fill ]
+            [ dateInput dateInputId config.dateChanged (Date.fromPosix config.timezone config.minTime) config.dateText config.isDisabled
+            , timeInput config.timeInputId config.timeChanged config.timeText config.isDisabled
+            ]
+        , config.maybeError |> Maybe.map errorView |> Maybe.withDefault Element.none
+        ]
+
+
+formLabelAboveEl : String -> Element msg
+formLabelAboveEl labelText =
+    Element.el
+        [ Element.paddingEach { top = 0, right = 0, bottom = 5, left = 0 }
+        , Element.Font.medium
+        , Element.Font.size 16
+        ]
+        (Element.paragraph [] [ Element.text labelText ])
+
+
+errorView : String -> Element msg
+errorView errorMessage =
+    Element.paragraph
+        [ Element.paddingEach { left = 4, right = 4, top = 4, bottom = 0 }
+        , Element.Font.color errorColor
+        , Element.Font.size 14
+        , Element.Font.medium
+        ]
+        [ Element.text errorMessage ]
+
+
+timeInput : HtmlId -> (String -> msg) -> String -> Bool -> Element msg
+timeInput htmlId onChange time isDisabled =
+    Html.input
+        ([ Html.Attributes.type_ "time"
+         , Html.Events.onInput onChange
+         , Html.Attributes.value time
+         , Html.Attributes.style "padding" "0px 5px 0px 5px"
+         , Dom.idToAttribute htmlId
+         , Html.Attributes.disabled isDisabled
+         ]
+            ++ htmlInputBorderStyles
+        )
+        []
+        |> Element.html
+        |> Element.el []
+
+
+htmlInputBorderStyles =
+    [ Html.Attributes.style "border-color" "gray"
+    , Html.Attributes.style "border-width" "1px"
+    , Html.Attributes.style "border-style" "solid"
+    , Html.Attributes.style "border-radius" "4px"
+    ]
+
+
+timeToString : Effect.Time.Zone -> Effect.Time.Posix -> String
+timeToString timezone time =
+    String.fromInt (Effect.Time.toHour timezone time)
+        ++ ":"
+        ++ String.padLeft 2 '0' (String.fromInt (Effect.Time.toMinute timezone time))
+
+
+dateInput : HtmlId -> (String -> msg) -> Date -> String -> Bool -> Element msg
+dateInput htmlId onChange minDateTime date isDisabled =
+    Html.input
+        ([ Html.Attributes.type_ "date"
+         , Html.Attributes.min (datestamp minDateTime)
+         , Html.Events.onInput onChange
+         , Html.Attributes.value date
+         , Html.Attributes.style "padding" "0px 5px 0px 5px"
+         , Dom.idToAttribute htmlId
+         , Html.Attributes.disabled isDisabled
+         ]
+            ++ htmlInputBorderStyles
+        )
+        []
+        |> Element.html
+        |> Element.el []
+
+
+datetimeToString : Effect.Time.Zone -> Effect.Time.Posix -> String
+datetimeToString timezone time =
+    let
+        offset =
+            toFloat (Time.toOffset timezone time) / 60
+    in
+    (time |> Date.fromPosix timezone |> Date.format "MMMM ddd")
+        ++ ", "
+        ++ timeToString timezone time
+        ++ (if offset >= 0 then
+                removeTrailing0s 1 offset |> (++) " GMT+"
+
+            else
+                removeTrailing0s 1 offset |> (++) " GMT"
+           )
+
+
+datestamp : Date -> String
+datestamp date =
+    String.fromInt (Date.year date)
+        ++ "-"
+        ++ String.padLeft 2 '0' (String.fromInt (Date.monthNumber date))
+        ++ "-"
+        ++ String.padLeft 2 '0' (String.fromInt (Date.day date))
+
+
+removeTrailing0s : Int -> Float -> String
+removeTrailing0s decimalPoints value =
+    case Round.round decimalPoints value |> String.split "." of
+        [ nonDecimal, decimal ] ->
+            if decimalPoints > 0 then
+                nonDecimal
+                    ++ "."
+                    ++ (String.foldr
+                            (\char ( text, reachedNonZero ) ->
+                                if reachedNonZero || char /= '0' then
+                                    ( text, True )
+
+                                else
+                                    ( String.dropRight 1 text, False )
+                            )
+                            ( decimal, False )
+                            decimal
+                            |> Tuple.first
+                       )
+                    |> dropSuffix "."
+
+            else
+                nonDecimal
+
+        [ nonDecimal ] ->
+            nonDecimal
+
+        _ ->
+            "0"
+
+
+dropSuffix : String -> String -> String
+dropSuffix suffix string =
+    if String.endsWith suffix string then
+        String.dropRight (String.length suffix) string
+
+    else
+        string
+
+
+validateDateTime : Effect.Time.Zone -> String -> String -> Result String Effect.Time.Posix
+validateDateTime timezone date time =
+    if String.trim date == "" then
+        Err "Date value missing"
+
+    else
+        case String.split "-" date |> List.map String.toInt of
+            [ Just year, Just monthInt, Just day ] ->
+                case intToMonth monthInt of
+                    Just month ->
+                        if String.trim time == "" then
+                            Err "Time value missing"
+
+                        else
+                            case String.split ":" time |> List.map String.toInt of
+                                [ Just hour, Just minute ] ->
+                                    let
+                                        timePosix =
+                                            Time.partsToPosix
+                                                timezone
+                                                { year = year
+                                                , month = month
+                                                , day = day
+                                                , hour = hour
+                                                , minute = minute
+                                                , second = 0
+                                                , millisecond = 0
+                                                }
+                                    in
+                                    Ok timePosix
+
+                                _ ->
+                                    Err "Invalid time format. Expected something like 22:59"
+
+                    Nothing ->
+                        Err "Invalid date format. Expected something like 2020-01-31"
+
+            _ ->
+                Err "Invalid date format. Expected something like 2020-01-31"
+
+
+intToMonth : Int -> Maybe Time.Month
+intToMonth value =
+    case value of
+        1 ->
+            Just Time.Jan
+
+        2 ->
+            Just Time.Feb
+
+        3 ->
+            Just Time.Mar
+
+        4 ->
+            Just Time.Apr
+
+        5 ->
+            Just Time.May
+
+        6 ->
+            Just Time.Jun
+
+        7 ->
+            Just Time.Jul
+
+        8 ->
+            Just Time.Aug
+
+        9 ->
+            Just Time.Sep
+
+        10 ->
+            Just Time.Oct
+
+        11 ->
+            Just Time.Nov
+
+        12 ->
+            Just Time.Dec
+
+        _ ->
+            Nothing
+
+
+diffToString : Time.Posix -> Time.Posix -> String
+diffToString start end =
+    let
+        difference : Duration
+        difference =
+            Duration.from start end |> Quantity.abs
+
+        months =
+            Duration.inDays difference / 30 |> floor
+
+        weeks =
+            Duration.inWeeks difference |> floor
+
+        days =
+            Duration.inDays difference
+
+        hours =
+            Duration.inHours difference |> floor
+
+        minutes =
+            Duration.inMinutes difference |> round
+
+        suffix =
+            if Time.posixToMillis start <= Time.posixToMillis end then
+                ""
+
+            else
+                " ago"
+    in
+    if months >= 2 then
+        String.fromInt months ++ "\u{00A0}months" ++ suffix
+
+    else if weeks >= 2 then
+        String.fromInt weeks ++ "\u{00A0}weeks" ++ suffix
+
+    else if days > 1 then
+        removeTrailing0s 1 days ++ "\u{00A0}days" ++ suffix
+
+    else if days > 0.9 && days < 1.1 then
+        if Time.posixToMillis start <= Time.posixToMillis end then
+            "1\u{00A0}day"
+
+        else
+            "yesterday"
+
+    else if hours > 6 then
+        String.fromInt hours ++ "\u{00A0}hours" ++ suffix
+
+    else if Duration.inHours difference >= 1.2 then
+        removeTrailing0s 1 (Duration.inHours difference) ++ "\u{00A0}hours" ++ suffix
+
+    else if minutes > 1 then
+        String.fromInt minutes ++ "\u{00A0}minutes" ++ suffix
+
+    else if minutes == 1 then
+        "1\u{00A0}minute" ++ suffix
+
+    else
+        "now"
